@@ -51,13 +51,20 @@ export type PacienteDemografiaDto = {
   descripcionOcupacion: string | null;
   alergias: string | null;
   alergeno: string | null;
+  fotoUrl: string | null;
+  fotoArchivo: string | null;
 };
 
 export type EvolucionSnapshotDto = {
   idListaCiudad: number | null;
   idEstadoCivil: number | null;
   documentoAseguradora: string | null;
+  nombreAseguradora: string | null;
   idTipoAfiliado: number | null;
+  tipoAfiliado: string | null;
+  telefono1: string | null;
+  celular: string | null;
+  email: string | null;
   idParentescoResponsable: number | null;
   nombreResponsable: string | null;
   telefonoResponsable: string | null;

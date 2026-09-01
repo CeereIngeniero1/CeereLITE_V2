@@ -22,4 +22,7 @@ export const envValidationSchema = Joi.object({
   STATIC_IMAGES_PATH: Joi.string().default(
     path.join(__dirname, '../../assets/static-images'),
   ),
+  FORMATOS_HC_PATH: Joi.string().default('C:/CeereSio/Formatos HC'),
+  FIRMA_ENTIDAD_PATH: Joi.string().default('C:/CeereSio/Firma Entidad'),
+  DOCUMENTOS_PATH: Joi.string().default('C:/CeereSio/Documentos'),
 });

@@ -1,12 +1,20 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as fs from 'fs';
+import * as path from 'path';
+import { DataSource, MssqlParameter } from 'typeorm';
 import type { JwtPayload } from '../auth/auth.service';
+import {
+  getFotoEntidadFileName,
+  resolveFotoEntidad,
+  saveEntidadFoto,
+  uploadedFileBuffer,
+  type UploadedFotoFile,
+} from '../entidad-foto';
 import { CreateEvaluacionDto } from './dto/create-evaluacion.dto';
-import { RegistrarRipsDto } from './dto/registrar-rips.dto';
+import { CreateNotaAclaratoriaDto } from './dto/create-nota-aclaratoria.dto';
+import { CreateObservacionDto } from './dto/create-observacion.dto';
+import { UpdateObservacionDto } from './dto/update-observacion.dto';
 import { UpdateEvaluacionDiagDto } from './dto/update-evaluacion-diag.dto';
 import { UpdatePacienteDemografiaDto } from './dto/update-paciente-demografia.dto';
 import type {
@@ -17,12 +25,47 @@ import type {
 } from './paciente-demografia.types';
 
 export type EvolucionListItemDto = {
-  idEvolucion: number;
-  pacienteEvolucion: string;
+  origen: 'evolucion' | 'nota';
+  id: number;
   fechaEvolucion: string;
   estado: string;
   hora: string;
+  idTipoEvaluacion?: number;
 };
+
+export type HistorialHcItemDto = {
+  id: number;
+  fecha: string;
+  idTipoEvaluacion: number;
+  nombreProfesional: string | null;
+  diagnosticoGeneral: string;
+  diagnosticoEspecifico: string;
+};
+
+export type DocumentoAnexoListItemDto = {
+  id: number;
+  nombre: string;
+  fecha: string;
+};
+
+export type NotaAclaratoriaDto = {
+  id: number;
+  fecha: string;
+  nota: string;
+  documentoPaciente: string;
+  nombreProfesional: string | null;
+};
+
+export type ObservacionListItemDto = {
+  id: number;
+  fecha: string;
+  observacion: string;
+  idEstado: number;
+  nombreUsuario: string | null;
+};
+
+/** 1 = evolución médica (texto), 4 = formato HTML de HC. */
+const TIPOS_NOTA_CLINICA = '1, 4';
 
 export type TipoEvaluacionDto = {
   idListaEvaluacion: number;
@@ -64,6 +107,30 @@ function toIsoDateOnly(value: unknown): string | null {
   if (value instanceof Date) return value.toISOString().split('T')[0];
   if (typeof value === 'string') return value.split('T')[0];
   return null;
+}
+
+function parseYmd(raw: string | undefined): string | null {
+  const s = String(raw ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(y, m - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) {
+    return null;
+  }
+  return s;
+}
+
+function ymdToSqlDateTime(ymd: string): string {
+  return `${ymd} 00:00:00`;
+}
+
+function ymdExclusiveEndSql(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + 1);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} 00:00:00`;
 }
 
 function toDateTimeLocal(value: unknown): string | null {
@@ -112,6 +179,73 @@ function strOrNullIfEmpty(v: string | null | undefined): string | null {
   return s === '' ? null : s;
 }
 
+function nombreCortoUsuario(
+  primerNombre: unknown,
+  primerApellido: unknown,
+): string | null {
+  const parts = [strOrNull(primerNombre), strOrNull(primerApellido)].filter(
+    (p): p is string => Boolean(p),
+  );
+  return parts.length ? parts.join(' ') : null;
+}
+
+function fechaListItem(
+  value: unknown,
+  horaFallback: string,
+): { fechaEvolucion: string; hora: string; ts: number } {
+  const d = value instanceof Date ? value : new Date(String(value ?? ''));
+  const ts = Number.isNaN(d.getTime()) ? 0 : d.getTime();
+  return {
+    fechaEvolucion: ts ? d.toISOString().split('T')[0] : String(value ?? ''),
+    hora: horaFallback || (ts
+      ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+      : ''),
+    ts,
+  };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function anexoSequenceNumber(documento: string, fileName: string): number {
+  const base = path.basename(String(fileName ?? '').replace(/\\/g, '/'));
+  const re = new RegExp(`^${escapeRegExp(documento)}-(\\d+)(?:\\.[^.]+)?$`, 'i');
+  const m = base.match(re);
+  return m ? Number(m[1]) : 0;
+}
+
+function contentDispositionAttachment(fileName: string): string {
+  const asciiName = fileName.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '');
+  const encoded = encodeURIComponent(fileName).replace(/['()]/g, (ch) =>
+    `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${asciiName}"; filename*=UTF-8''${encoded}`;
+}
+
+function mimeFromFileName(fileName: string): string {
+  const ext = path.extname(fileName).toLowerCase();
+  const map: Record<string, string> = {
+    '.pdf': 'application/pdf',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+    '.tif': 'image/tiff',
+    '.tiff': 'image/tiff',
+    '.doc': 'application/msword',
+    '.docx':
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx':
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.txt': 'text/plain; charset=utf-8',
+  };
+  return map[ext] ?? 'application/octet-stream';
+}
+
 function extractInsertedEvaluacionId(result: unknown): number | null {
   if (!Array.isArray(result) || result.length === 0) return null;
   const row = result[0] as Record<string, unknown>;
@@ -137,109 +271,674 @@ const PACIENTE_CATALOG_SEGMENTS = [
   'etnia',
   'discapacidad',
   'ocupacion',
+  'parentesco',
 ] as const;
 
 type PacienteCatalogSegment = (typeof PACIENTE_CATALOG_SEGMENTS)[number];
 
 @Injectable()
 export class EvolucionService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly config: ConfigService,
+  ) {}
 
   async listEvolucionesMedicas(
     documentoEntidad: string,
   ): Promise<EvolucionListItemDto[]> {
+    const [evoRows, notaRows] = await Promise.all([
+      this.dataSource.query<
+        Record<string, string | number | Date | null>[]
+      >(
+        `
+      SELECT [Id Evaluación Entidad],
+             [Id Tipo de Evaluación],
+             [Fecha Evaluación Entidad],
+             [Estado],
+             [Hora]
+      FROM dbo.[Lite Cnsta HcListaEvaluacion]
+      WHERE [Documento Entidad] = @0
+    `,
+        [documentoEntidad],
+      ),
+      this.dataSource.query<
+        Record<string, string | number | Date | null>[]
+      >(
+        `
+      SELECT [Id Historia Clinica CAPF Notas Aclaratorias],
+             [Fecha Historia Clinica CAPF Notas Aclaratorias],
+             [Hora]
+      FROM dbo.[Lite Cnsta HcListaNotaAclaratoria]
+      WHERE [Documento Usuario] = @0
+    `,
+        [documentoEntidad],
+      ),
+    ]);
+
+    const evoluciones: Array<EvolucionListItemDto & { ts: number }> =
+      evoRows.map((row) => {
+        const fh = fechaListItem(
+          row['Fecha Evaluación Entidad'],
+          String(row['Hora'] ?? ''),
+        );
+        return {
+          origen: 'evolucion' as const,
+          id: Number(row['Id Evaluación Entidad']),
+          fechaEvolucion: fh.fechaEvolucion,
+          estado: String(row['Estado'] ?? ''),
+          hora: fh.hora,
+          idTipoEvaluacion: Number(row['Id Tipo de Evaluación'] ?? 1),
+          ts: fh.ts,
+        };
+      });
+
+    const notas: Array<EvolucionListItemDto & { ts: number }> = notaRows.map(
+      (row) => {
+        const fh = fechaListItem(
+          row['Fecha Historia Clinica CAPF Notas Aclaratorias'],
+          String(row['Hora'] ?? ''),
+        );
+        return {
+          origen: 'nota' as const,
+          id: Number(row['Id Historia Clinica CAPF Notas Aclaratorias']),
+          fechaEvolucion: fh.fechaEvolucion,
+          estado: 'Cerrado',
+          hora: fh.hora,
+          ts: fh.ts,
+        };
+      },
+    );
+
+    return [...evoluciones, ...notas]
+      .sort((a, b) => b.ts - a.ts)
+      .map(({ ts: _ts, ...item }) => item);
+  }
+
+  async listHistorialHc(
+    documentoEntidad: string,
+    desdeRaw: string | undefined,
+    hastaRaw: string | undefined,
+  ): Promise<HistorialHcItemDto[]> {
+    const doc = String(documentoEntidad ?? '').trim();
+    if (!doc) {
+      throw new BadRequestException('documento del paciente es obligatorio');
+    }
+    const desde = parseYmd(desdeRaw);
+    const hasta = parseYmd(hastaRaw);
+    if (!desde || !hasta) {
+      throw new BadRequestException('desde y hasta deben ser fechas YYYY-MM-DD');
+    }
+    if (desde > hasta) {
+      throw new BadRequestException('desde no puede ser posterior a hasta');
+    }
+    const desdeSql = ymdToSqlDateTime(desde);
+    const hastaExclSql = ymdExclusiveEndSql(hasta);
     const rows = await this.dataSource.query<
       Record<string, string | number | Date | null>[]
     >(
       `
-      SELECT eve.[Id Evaluación Entidad],
-             en.[Primer Nombre Entidad] + ' ' + en.[Primer Apellido Entidad] AS [Nombre Paciente],
-             eve.[Fecha Evaluación Entidad],
-             CASE
-               WHEN eve.[Id Estado] = 7 THEN 'Cerrado'
-               WHEN eve.[Id Estado] = 8 THEN 'Abierto'
-               ELSE ''
-             END AS [Estado],
-             FORMAT(eve.[Fecha Evaluación Entidad], 'hh:mm tt') AS [Hora]
-      FROM [Evaluación Entidad] AS eve
-      INNER JOIN Entidad AS en ON eve.[Documento Entidad] = en.[Documento Entidad]
-      WHERE eve.[Id Tipo de Evaluación] = 1
-        AND eve.[Documento Entidad] = @0
-      ORDER BY eve.[Fecha Evaluación Entidad] DESC
+      SELECT [Id Evaluación Entidad],
+             [Id Tipo de Evaluación],
+             [Fecha Evaluación Entidad],
+             [Nombre Profesional],
+             [Diagnostico General],
+             [Diagnostico especifico]
+      FROM dbo.[Lite Cnsta HcHistorial]
+      WHERE [Documento Entidad] = @0
+        AND [Fecha Evaluación Entidad] >= CONVERT(datetime, @1, 120)
+        AND [Fecha Evaluación Entidad] < CONVERT(datetime, @2, 120)
+      ORDER BY [Fecha Evaluación Entidad] ASC, [Id Evaluación Entidad] ASC
     `,
-      [documentoEntidad],
+      [doc, desdeSql, hastaExclSql],
+    );
+    return rows.map((row) => {
+      const fechaRaw = row['Fecha Evaluación Entidad'];
+      const fecha =
+        fechaRaw instanceof Date
+          ? fechaRaw.toISOString()
+          : String(fechaRaw ?? '');
+      return {
+        id: Number(row['Id Evaluación Entidad']),
+        fecha,
+        idTipoEvaluacion: Number(row['Id Tipo de Evaluación'] ?? 1),
+        nombreProfesional: strOrNull(row['Nombre Profesional']),
+        diagnosticoGeneral: String(row['Diagnostico General'] ?? ''),
+        diagnosticoEspecifico: String(row['Diagnostico especifico'] ?? ''),
+      };
+    });
+  }
+
+  async listDocumentoAnexos(
+    documentoEntidad: string,
+  ): Promise<DocumentoAnexoListItemDto[]> {
+    const doc = String(documentoEntidad ?? '').trim();
+    if (!doc) {
+      throw new BadRequestException('documento del paciente es obligatorio');
+    }
+    const rows = await this.dataSource.query<
+      Record<string, string | number | Date | null>[]
+    >(
+      `
+      SELECT [Id Documento Anexo],
+             [Documento Anexo],
+             [Fecha Documento Anexo]
+      FROM dbo.[Lite Cnsta HcDocumentoAnexo]
+      WHERE [Documento Entidad] = @0
+      ORDER BY [Fecha Documento Anexo] DESC
+    `,
+      [doc],
+    );
+    return rows.map((row) => {
+      const archivo = strOrNull(row['Documento Anexo']);
+      const fechaRaw = row['Fecha Documento Anexo'];
+      const fecha =
+        fechaRaw instanceof Date
+          ? fechaRaw.toISOString()
+          : String(fechaRaw ?? '');
+      return {
+        id: Number(row['Id Documento Anexo']),
+        nombre: archivo || 'Documento',
+        fecha,
+      };
+    });
+  }
+
+  private documentosRoot(): string {
+    const root = path.resolve(
+      this.config.get<string>('DOCUMENTOS_PATH') ?? 'C:/CeereSio/Documentos',
+    );
+    if (!fs.existsSync(root)) {
+      fs.mkdirSync(root, { recursive: true });
+    }
+    return root;
+  }
+
+  private resolvePathInDocumentos(fileName: string): {
+    fullPath: string;
+    fileName: string;
+  } {
+    const safeName = path.basename(String(fileName ?? '').replace(/\\/g, '/'));
+    if (!safeName || safeName === '.' || safeName === '..') {
+      throw new NotFoundException('Archivo del anexo no válido');
+    }
+    const root = this.documentosRoot();
+    const fullPath = path.resolve(root, safeName);
+    const rootPrefix = root.endsWith(path.sep) ? root : root + path.sep;
+    if (fullPath !== root && !fullPath.startsWith(rootPrefix)) {
+      throw new NotFoundException('Archivo del anexo no válido');
+    }
+    return { fullPath, fileName: safeName };
+  }
+
+  private async resolveAnexoDiskPath(
+    documentoEntidad: string,
+    id: number,
+  ): Promise<{ fullPath: string; fileName: string }> {
+    const doc = String(documentoEntidad ?? '').trim();
+    if (!doc) {
+      throw new BadRequestException('documento del paciente es obligatorio');
+    }
+    const rows = await this.dataSource.query<
+      Record<string, string | number | Date | null>[]
+    >(
+      `
+      SELECT [Descripción Documento Anexo],
+             [Documento Anexo]
+      FROM dbo.[Lite Cnsta HcDocumentoAnexo]
+      WHERE [Id Documento Anexo] = @0
+        AND [Documento Entidad] = @1
+    `,
+      [id, doc],
+    );
+    if (!rows[0]) {
+      throw new NotFoundException('Documento anexo no encontrado');
+    }
+    const storedName =
+      strOrNull(rows[0]['Descripción Documento Anexo']) ||
+      strOrNull(rows[0]['Documento Anexo']);
+    if (!storedName) {
+      throw new NotFoundException('Documento anexo no encontrado');
+    }
+    return this.resolvePathInDocumentos(storedName);
+  }
+
+  async nextAnexoNombreBase(
+    documentoEntidad: string,
+  ): Promise<{ nombre: string }> {
+    const doc = String(documentoEntidad ?? '').trim();
+    if (!doc) {
+      throw new BadRequestException('documento del paciente es obligatorio');
+    }
+    const n = await this.nextAnexoSequence(doc);
+    return { nombre: `${doc}-${n}` };
+  }
+
+  private async nextAnexoSequence(doc: string): Promise<number> {
+    const rows = await this.dataSource.query<
+      Record<string, string | null>[]
+    >(
+      `
+      SELECT [Descripción Documento Anexo]
+      FROM dbo.[Lite Cnsta HcDocumentoAnexo]
+      WHERE [Documento Entidad] = @0
+    `,
+      [doc],
+    );
+    let max = 0;
+    for (const row of rows) {
+      const n = anexoSequenceNumber(
+        doc,
+        String(row['Descripción Documento Anexo'] ?? ''),
+      );
+      if (n > max) max = n;
+    }
+    const root = this.documentosRoot();
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const n = anexoSequenceNumber(doc, entry.name);
+      if (n > max) max = n;
+    }
+    return max + 1;
+  }
+
+  async getDocumentoAnexoArchivo(
+    documentoEntidad: string,
+    id: number,
+  ): Promise<{
+    fullPath: string;
+    fileName: string;
+    mime: string;
+    disposition: string;
+  }> {
+    const { fullPath, fileName } = await this.resolveAnexoDiskPath(
+      documentoEntidad,
+      id,
+    );
+    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+      throw new NotFoundException('No se encontró el archivo en Documentos');
+    }
+    return {
+      fullPath,
+      fileName,
+      mime: mimeFromFileName(fileName),
+      disposition: contentDispositionAttachment(fileName),
+    };
+  }
+
+  async saveDocumentoAnexoArchivo(
+    documentoEntidad: string,
+    id: number,
+    file?: UploadedFotoFile,
+  ): Promise<{ ok: true; fileName: string }> {
+    const doc = String(documentoEntidad ?? '').trim();
+    if (!file) {
+      throw new BadRequestException('Debe seleccionar un archivo');
+    }
+    const buf = uploadedFileBuffer(file);
+    if (!buf.length) {
+      throw new BadRequestException('El archivo está vacío');
+    }
+    const ext = path.extname(file.originalname ?? '').toLowerCase();
+    if (!ext || ext === '.') {
+      throw new BadRequestException('El archivo debe tener extensión');
+    }
+    const { fullPath: oldPath, fileName: oldName } =
+      await this.resolveAnexoDiskPath(doc, id);
+    const stem = path.basename(oldName, path.extname(oldName));
+    const fileName = `${stem}${ext}`;
+    const { fullPath } = this.resolvePathInDocumentos(fileName);
+    fs.writeFileSync(fullPath, buf);
+    if (path.resolve(oldPath) !== path.resolve(fullPath) && fs.existsSync(oldPath)) {
+      try {
+        fs.unlinkSync(oldPath);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (fileName !== oldName) {
+      await this.dataSource.query(
+        `
+        UPDATE [Documento Anexo]
+        SET [Descripción Documento Anexo] = @0
+        WHERE [Id Documento Anexo] = @1
+          AND [Documento Entidad] = @2
+      `,
+        [fileName, id, doc],
+      );
+    }
+    return { ok: true, fileName };
+  }
+
+  async createDocumentoAnexo(
+    user: JwtPayload,
+    documentoEntidad: string,
+    file?: UploadedFotoFile,
+    nombre?: string,
+  ): Promise<{ id: number; fileName: string }> {
+    const doc = String(documentoEntidad ?? '').trim();
+    if (!doc) {
+      throw new BadRequestException('documento del paciente es obligatorio');
+    }
+    if (!file) {
+      throw new BadRequestException('Debe seleccionar un archivo');
+    }
+    const buf = uploadedFileBuffer(file);
+    if (!buf.length) {
+      throw new BadRequestException('El archivo está vacío');
+    }
+    const nombreListado = String(nombre ?? '').trim();
+    if (!nombreListado) {
+      throw new BadRequestException('El nombre del documento es obligatorio');
+    }
+    const ext = path.extname(file.originalname ?? '').toLowerCase();
+    if (!ext || ext === '.') {
+      throw new BadRequestException('El archivo debe tener extensión');
+    }
+    let seq = await this.nextAnexoSequence(doc);
+    let fileName = `${doc}-${seq}${ext}`;
+    let { fullPath } = this.resolvePathInDocumentos(fileName);
+    while (fs.existsSync(fullPath)) {
+      seq += 1;
+      if (seq > 10_000) {
+        throw new BadRequestException('No se pudo asignar un nombre de archivo');
+      }
+      fileName = `${doc}-${seq}${ext}`;
+      ({ fullPath } = this.resolvePathInDocumentos(fileName));
+    }
+    const docSistema = String(user.documentoEntidad ?? '').trim();
+    if (!docSistema) {
+      throw new BadRequestException('Usuario sin documento');
+    }
+    const [idTerminal, docEmpresa] = await Promise.all([
+      this.resolveIdTerminal(docSistema),
+      this.resolveDocumentoEmpresa(undefined),
+    ]);
+    fs.writeFileSync(fullPath, buf);
+    try {
+      const result = await this.dataSource.query(
+        `
+      DECLARE @InsertedIds TABLE (id INT);
+
+      INSERT INTO [Documento Anexo]
+        ([Documento Entidad],
+         [Documento Anexo],
+         [Descripción Documento Anexo],
+         [Fecha Documento Anexo],
+         [Documento Empresa],
+         [Id Terminal],
+         [Id Estado])
+      OUTPUT INSERTED.[Id Documento Anexo] INTO @InsertedIds(id)
+      VALUES
+        (@0, @1, @2, SYSUTCDATETIME(), @3, @4, 1);
+
+      SELECT COALESCE(
+        (SELECT TOP 1 id FROM @InsertedIds),
+        CAST(SCOPE_IDENTITY() AS INT)
+      ) AS id;
+    `,
+        [doc, nombreListado, fileName, docEmpresa, idTerminal],
+      );
+      const id = extractInsertedEvaluacionId(result);
+      if (id == null) {
+        throw new BadRequestException('No se pudo guardar el documento anexo');
+      }
+      return { id, fileName };
+    } catch (err) {
+      try {
+        if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+      } catch {
+        /* ignore */
+      }
+      throw err;
+    }
+  }
+
+  async listObservaciones(
+    documentoEntidad: string,
+  ): Promise<ObservacionListItemDto[]> {
+    const doc = String(documentoEntidad ?? '').trim();
+    if (!doc) {
+      throw new BadRequestException('documento del paciente es obligatorio');
+    }
+    const rows = await this.dataSource.query<
+      Record<string, string | number | Date | null>[]
+    >(
+      `
+      SELECT IdEntidadObservacion,
+             [Fecha Nota Aclaratoria],
+             Observacion,
+             [Id Estado],
+             [Primer Nombre Usuario],
+             [Primer Apellido Usuario]
+      FROM dbo.[Lite Cnsta HcObservacion]
+      WHERE [Documento Usuario] = @0
+      ORDER BY [Fecha Nota Aclaratoria] DESC, IdEntidadObservacion DESC
+    `,
+      [doc],
+    );
+    return rows.map((row) => this.mapObservacionRow(row));
+  }
+
+  async createObservacion(
+    user: JwtPayload,
+    documentoEntidad: string,
+    dto: CreateObservacionDto,
+  ): Promise<{ id: number }> {
+    const doc = String(documentoEntidad ?? '').trim();
+    const observacion = String(dto.observacion ?? '').trim();
+    if (!doc) {
+      throw new BadRequestException('documento del paciente es obligatorio');
+    }
+    if (!observacion) {
+      throw new BadRequestException('La observación no puede estar vacía');
+    }
+    const docSistema = String(user.documentoEntidad ?? '').trim();
+    if (!docSistema) {
+      throw new BadRequestException('Usuario sin documento');
+    }
+    const idTerminal = await this.resolveIdTerminal(docSistema);
+    const result = await this.dataSource.query(
+      `
+      DECLARE @InsertedIds TABLE (id INT);
+
+      INSERT INTO [Entidad Observacion]
+        ([Fecha Nota Aclaratoria],
+         Observacion,
+         [Documento Usuario],
+         [Documento Usuario Sistema],
+         [Id Terminal],
+         [Id Estado])
+      OUTPUT INSERTED.IdEntidadObservacion INTO @InsertedIds(id)
+      VALUES
+        (SYSUTCDATETIME(), @0, @1, @2, @3, 7);
+
+      SELECT COALESCE(
+        (SELECT TOP 1 id FROM @InsertedIds),
+        CAST(SCOPE_IDENTITY() AS INT)
+      ) AS id;
+    `,
+      [observacion, doc, docSistema, idTerminal],
+    );
+    const id = extractInsertedEvaluacionId(result);
+    if (id == null) {
+      throw new BadRequestException('No se pudo guardar la observación');
+    }
+    return { id };
+  }
+
+  async updateObservacion(
+    documentoEntidad: string,
+    id: number,
+    dto: UpdateObservacionDto,
+  ): Promise<{ ok: true }> {
+    const doc = String(documentoEntidad ?? '').trim();
+    const observacion = String(dto.observacion ?? '').trim();
+    const idEstado = Number(dto.idEstado);
+    if (!doc) {
+      throw new BadRequestException('documento del paciente es obligatorio');
+    }
+    if (!observacion) {
+      throw new BadRequestException('La observación no puede estar vacía');
+    }
+    if (idEstado !== 7 && idEstado !== 8) {
+      throw new BadRequestException('Estado no válido');
+    }
+    const found = await this.dataSource.query<{ id: number }[]>(
+      `
+      SELECT TOP 1 IdEntidadObservacion AS id
+      FROM [Entidad Observacion]
+      WHERE IdEntidadObservacion = @0
+        AND [Documento Usuario] = @1
+    `,
+      [id, doc],
+    );
+    if (!found.length) {
+      throw new NotFoundException('Observación no encontrada');
+    }
+    await this.dataSource.query(
+      `
+      UPDATE [Entidad Observacion]
+      SET Observacion = @0,
+          [Id Estado] = @1
+      WHERE IdEntidadObservacion = @2
+        AND [Documento Usuario] = @3
+    `,
+      [observacion, idEstado, id, doc],
+    );
+    return { ok: true };
+  }
+
+  private mapObservacionRow(
+    row: Record<string, string | number | Date | null>,
+  ): ObservacionListItemDto {
+    const fechaRaw = row['Fecha Nota Aclaratoria'];
+    const fecha =
+      fechaRaw instanceof Date
+        ? fechaRaw.toISOString()
+        : String(fechaRaw ?? '');
+    const estado = Number(row['Id Estado']);
+    return {
+      id: Number(row['IdEntidadObservacion']),
+      fecha,
+      observacion: String(row['Observacion'] ?? ''),
+      idEstado: estado === 8 ? 8 : 7,
+      nombreUsuario: nombreCortoUsuario(
+        row['Primer Nombre Usuario'],
+        row['Primer Apellido Usuario'],
+      ),
+    };
+  }
+
+  async getNotaAclaratoria(
+    id: number,
+    documentoPaciente: string,
+  ): Promise<NotaAclaratoriaDto> {
+    const doc = String(documentoPaciente ?? '').trim();
+    if (!doc) {
+      throw new BadRequestException('documento del paciente es obligatorio');
+    }
+    const rows = await this.dataSource.query<
+      Record<string, string | number | Date | null>[]
+    >(
+      `
+      SELECT [Id Historia Clinica CAPF Notas Aclaratorias],
+             [Fecha Historia Clinica CAPF Notas Aclaratorias],
+             [Nota Aclaratoria Historia Clinica CAPF Notas Aclaratorias],
+             [Documento Usuario],
+             [Nombre Profesional]
+      FROM dbo.[Lite Cnsta HcNotaAclaratoria]
+      WHERE [Id Historia Clinica CAPF Notas Aclaratorias] = @0
+        AND [Documento Usuario] = @1
+    `,
+      [id, doc],
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new NotFoundException('Nota aclaratoria no encontrada');
+    }
+    const fechaRaw = row['Fecha Historia Clinica CAPF Notas Aclaratorias'];
+    const fecha =
+      fechaRaw instanceof Date
+        ? fechaRaw.toISOString()
+        : String(fechaRaw ?? '');
+    return {
+      id: Number(row['Id Historia Clinica CAPF Notas Aclaratorias']),
+      fecha,
+      nota: String(
+        row['Nota Aclaratoria Historia Clinica CAPF Notas Aclaratorias'] ?? '',
+      ),
+      documentoPaciente: String(row['Documento Usuario'] ?? ''),
+      nombreProfesional: strOrNull(row['Nombre Profesional']),
+    };
+  }
+
+  async createNotaAclaratoria(
+    user: JwtPayload,
+    dto: CreateNotaAclaratoriaDto,
+  ): Promise<{ id: number }> {
+    const docPaciente = String(dto.documentoPaciente ?? '').trim();
+    const nota = String(dto.nota ?? '').trim();
+    if (!docPaciente) {
+      throw new BadRequestException('documentoPaciente es obligatorio');
+    }
+    if (!nota) {
+      throw new BadRequestException('La nota no puede estar vacía');
+    }
+    const docSistema = String(user.documentoEntidad ?? '').trim();
+    if (!docSistema) {
+      throw new BadRequestException('Usuario sin documento');
+    }
+    const idTerminal = await this.resolveIdTerminal(docSistema);
+
+    const result = await this.dataSource.query(
+      `
+      DECLARE @InsertedIds TABLE (id INT);
+
+      INSERT INTO [Historia Clinica CAPF Notas Aclaratorias]
+        ([Fecha Historia Clinica CAPF Notas Aclaratorias],
+         [Nota Aclaratoria Historia Clinica CAPF Notas Aclaratorias],
+         [Documento Usuario],
+         [Documento Usuario Sistema],
+         [Id Terminal],
+         [Id Estado])
+      OUTPUT INSERTED.[Id Historia Clinica CAPF Notas Aclaratorias] INTO @InsertedIds(id)
+      VALUES
+        (SYSUTCDATETIME(), @0, @1, @2, @3, 1);
+
+      SELECT COALESCE(
+        (SELECT TOP 1 id FROM @InsertedIds),
+        CAST(SCOPE_IDENTITY() AS INT)
+      ) AS id;
+    `,
+      [nota, docPaciente, docSistema, idTerminal],
     );
 
-    return rows.map((row) => ({
-      idEvolucion: Number(row['Id Evaluación Entidad']),
-      pacienteEvolucion: String(row['Nombre Paciente'] ?? ''),
-      fechaEvolucion:
-        row['Fecha Evaluación Entidad'] instanceof Date
-          ? (row['Fecha Evaluación Entidad'] as Date).toISOString().split('T')[0]
-          : String(row['Fecha Evaluación Entidad'] ?? ''),
-      estado: String(row['Estado'] ?? ''),
-      hora: String(row['Hora'] ?? ''),
-    }));
+    const id = extractInsertedEvaluacionId(result);
+    if (id == null) {
+      throw new BadRequestException('No se pudo guardar la nota aclaratoria');
+    }
+    return { id };
   }
 
   async getEvolucionMedicaById(idEvaluacion: number): Promise<unknown[]> {
     const rows = await this.dataSource.query(
       `
-      SELECT eve.[Id Evaluación Entidad], tpe.[Tipo de Evaluación], eve.[Id Tipo de Evaluación], enpro.[Nombre Completo Entidad] AS [Nombre Profesional],
-             [Fecha Evaluación Entidad], en.[Nombre Completo Entidad] AS [Nombre Paciente],
-             eve.[Documento Entidad] AS [Documento Paciente], eve.[Dirección Domicilio], eve.[Id Ciudad], Ciudad.Ciudad,
-             eve.[Teléfono Domicilio], eve.[Fecha Nacimiento], eve.[Edad Entidad Evaluación Entidad] AS [Edad Paciente],
-             eve.[Id Unidad de Medida Edad], ume.[Descripción Unidad de Medida Edad] AS [Unidad Medida], eve.[Id Sexo], Sexo.[Descripción Sexo],
-             eve.[Id Estado Civil], ec.[Estado Civil], eve.[Id Ocupación], oc.Ocupación, eve.[Documento Aseguradora],
-             enase.[Nombre Completo Entidad] AS [Nombre Aseguradora], eve.[Id Tipo de Afiliado], tpa.[Tipo de Afiliado],
-             eve.[Acompañante Evaluación Entidad] AS [Acompanante],
-             eve.[Id Parentesco],
-             pa.Parentesco AS [Parentesco Acompanante],
-             eve.[Teléfono Acompañante],
-             eve.[Responsable Evaluación Entidad] AS [Responsable], eve.[Id Parentesco Responsable], pr.Parentesco AS [Parentesco Responsable],
-             eve.[Teléfono Responsable], eve.[Diagnóstico General Evaluación Entidad] AS [Diagnostico General],
-             eve.[Diagnóstico Específico Evaluación Entidad] AS [Diagnostico especifico], eve.[Firma Evaluación Entidad],
-             everips.[Id Acto Quirúrgico],
-             everips.[Id Tipo de Rips], tpr.[Tipo Rips], everips.[Codigo Rips], ob.[Descripción Objeto] AS [Nombre Procedimiento],
-             everips.[Codigo Rips2], ob2.[Descripción Objeto] AS [Nombre Procedimiento 2], everips.[Diagnostico Rips],
-             obd.[Descripción Objeto] AS [Nombre Diagnóstico], everips.[Diagnostico Rips2],
-             obd2.[Descripción Objeto] AS [Nombre Diagnostico 2], everips.[Documento Tipo Rips] AS [Documento Entidad],
-             ent.[Nombre Completo Entidad] AS [Nombre Entidad], everips.[Id Modalidad Atencion], rma.[Nombre Modalidad Atencion] AS [Modalidad Atencion],
-             everips.[Id Grupo Servicios], rgs.[Nombre Grupo Servicios] AS [Grupo Servicios], everips.[Id Servicios],
-             rs.[Nombre Servicios] AS [Servicios], everips.[Id Finalidad Consulta], fnc.[Descripción Finalidad Consulta] AS [Finalidad Consulta],
-             everips.[Id Causa Externa], ce.[Descripción Causa Externa] AS [Causa Externa],
-             everips.[Id Tipo de Diagnóstico Principal], tpd.[Descripción Tipo de Diagnóstico Principal] AS [Tipo Diagnostico Principal],
-             everips.[Id Via Ingreso Usuario], rvi.[Nombre Via Ingreso Usuario] AS [Via Ingreso],
-             fnp.[Descripción Finalidad del Procedimiento] AS [Finalidad Procedimiento]
-      FROM [Evaluación Entidad] AS eve
-      LEFT JOIN [Tipo de Evaluación] AS tpe ON eve.[Id Tipo de Evaluación] = tpe.[Id Tipo de Evaluación]
-      LEFT JOIN Entidad AS en ON eve.[Documento Entidad] = en.[Documento Entidad]
-      LEFT JOIN Entidad AS enpro ON eve.[Documento Profesional] = enpro.[Documento Entidad]
-      LEFT JOIN Ciudad ON eve.[Id Ciudad] = Ciudad.[Id Ciudad]
-      LEFT JOIN [Unidad de Medida Edad] AS ume ON eve.[Id Unidad de Medida Edad] = ume.[Id Unidad de Medida Edad]
-      LEFT JOIN Sexo ON eve.[Id Sexo] = Sexo.[Id Sexo]
-      LEFT JOIN [Estado Civil] AS ec ON eve.[Id Estado Civil] = ec.[Id Estado Civil]
-      LEFT JOIN Ocupación AS oc ON eve.[Id Ocupación] = oc.[Id Ocupación]
-      LEFT JOIN Entidad AS enase ON eve.[Documento Aseguradora] = enase.[Documento Entidad]
-      LEFT JOIN [Tipo de Afiliado] AS tpa ON eve.[Id Tipo de Afiliado] = tpa.[Id Tipo de Afiliado]
-      LEFT JOIN Parentesco AS pa ON eve.[Id Parentesco] = pa.[Id Parentesco]
-      LEFT JOIN Parentesco AS pr ON eve.[Id Parentesco Responsable] = pr.[Id Parentesco]
-      LEFT JOIN [Evaluación Entidad Rips] AS everips ON eve.[Id Evaluación Entidad] = everips.[Id Evaluación Entidad]
-      LEFT JOIN [Tipo Rips] AS tpr ON everips.[Id Tipo de Rips] = tpr.[Id Tipo Rips]
-      LEFT JOIN Objeto AS ob ON everips.[Codigo Rips] = ob.[Código Objeto]
-      LEFT JOIN Objeto AS ob2 ON everips.[Codigo Rips2] = ob2.[Código Objeto]
-      LEFT JOIN Objeto AS obd ON everips.[Diagnostico Rips] = obd.[Código Objeto]
-      LEFT JOIN Objeto AS obd2 ON everips.[Diagnostico Rips2] = obd2.[Código Objeto]
-      LEFT JOIN Entidad AS ent ON everips.[Documento Tipo Rips] = ent.[Documento Entidad]
-      LEFT JOIN [RIPS Modalidad Atención] AS rma ON everips.[Id Modalidad Atencion] = rma.[Id Modalidad Atencion]
-      LEFT JOIN [RIPS Grupo Servicios] AS rgs ON everips.[Id Grupo Servicios] = rgs.[Id Grupo Servicios]
-      LEFT JOIN [RIPS Servicios] AS rs ON everips.[Id Servicios] = rs.[Id Servicios]
-      LEFT JOIN [Finalidad Consulta] AS fnc ON everips.[Id Finalidad Consulta] = fnc.[Id Finalidad Consulta]
-      LEFT JOIN [Causa Externa] AS ce ON everips.[Id Causa Externa] = ce.[Id Causa Externa]
-      LEFT JOIN [Tipo de Diagnóstico Principal] AS tpd ON everips.[Id Tipo de Diagnóstico Principal] = tpd.[Id Tipo de Diagnóstico Principal]
-      LEFT JOIN [RIPS Via Ingreso Usuario] AS rvi ON everips.[Id Via Ingreso Usuario] = rvi.[Id Via Ingreso Usuario]
-      LEFT JOIN [Finalidad del Procedimiento] AS fnp ON everips.[Id Finalidad Consulta] = fnp.[Id Finalidad del Procedimiento]
-      WHERE eve.[Id Tipo de Evaluación] = 1 AND eve.[Id Evaluación Entidad] = @0
+      SELECT [Id Evaluación Entidad], [Tipo de Evaluación], [Id Tipo de Evaluación], [Nombre Profesional],
+             [Fecha Evaluación Entidad], [Nombre Paciente],
+             [Documento Paciente], [Dirección Domicilio], [Id Ciudad], Ciudad,
+             [Teléfono Domicilio], [Fecha Nacimiento], [Edad Paciente],
+             [Id Unidad de Medida Edad], [Unidad Medida], [Id Sexo], [Descripción Sexo],
+             [Id Estado Civil], [Estado Civil], [Id Ocupación], Ocupación, [Documento Aseguradora],
+             [Nombre Aseguradora], [Id Tipo de Afiliado], [Tipo de Afiliado],
+             [Acompanante],
+             [Id Parentesco],
+             [Parentesco Acompanante],
+             [Teléfono Acompañante],
+             [Responsable], [Id Parentesco Responsable], [Parentesco Responsable],
+             [Teléfono Responsable], [Diagnostico General],
+             [Diagnostico especifico], [Firma Evaluación Entidad]
+      FROM dbo.[Lite Cnsta HcEvaluacionDetalle]
+      WHERE [Id Evaluación Entidad] = @0
     `,
       [idEvaluacion],
     );
@@ -258,49 +957,36 @@ export class EvolucionService {
       Record<string, string | number | Date | null>[]
     >(
       `
-      SELECT en.[Nombre Completo Entidad] AS [Nombre Paciente],
-             en.[Documento Entidad] AS [Documento Paciente],
-             en.[Id Tipo de Documento] AS [Id Tipo Documento],
-             td.[Descripción Tipo de Documento] AS [Tipo Documento],
-             en.[Primer Apellido Entidad] AS [Primer Apellido Paciente],
-             en.[Segundo Apellido Entidad] AS [Segundo Apellido Paciente],
-             en.[Primer Nombre Entidad] AS [Primer Nombre Paciente],
-             en.[Segundo Nombre Entidad] AS [Segundo Nombre Paciente],
-             en2.[Dirección EntidadII] AS [Direccion Paciente],
-             Ciudad.[Id Ciudad],
-             Ciudad.Ciudad,
-             en2.[Teléfono Celular EntidadII] AS [Celular Paciente],
-             CONVERT(DATE, en3.[Fecha Nacimiento EntidadIII], 101) AS [Fecha Nacimiento Paciente],
-             en3.[Edad EntidadIII] AS [Edad Paciente],
-             en3.[Id Unidad de Medida Edad],
-             ume.[Descripción Unidad de Medida Edad],
-             Sexo.[Id Sexo],
-             Sexo.[Descripción Sexo] AS Sexo,
-             en3.[Id Estado Civil],
-             esc.[Estado Civil],
-             ocu.[Id Ocupación],
-             ocu.Ocupación,
-             en24.[Id Tipo de Afiliado],
-             tpa.[Descripción Tipo de Afiliado],
-             en24.[Documento Entidad Prepago] AS [Documento EPS],
-             en3.[Acompañante EntidadIII] AS [Nombre Responsable],
-             en3.[Id Parentesco],
-             en3.[Tel Acompañante EntidadIII] AS [Teléfono Responsable]
-      FROM Entidad AS en
-      LEFT JOIN [Tipo de Documento] AS td
-             ON en.[Id Tipo de Documento] = td.[Id Tipo de Documento]
-      LEFT JOIN EntidadII AS en2 ON en.[Documento Entidad] = en2.[Documento Entidad]
-      LEFT JOIN EntidadIII AS en3 ON en.[Documento Entidad] = en3.[Documento Entidad]
-      INNER JOIN Ciudad ON en2.[Id Ciudad] = Ciudad.[Id Ciudad]
-      LEFT JOIN Sexo ON en3.[Id Sexo] = Sexo.[Id Sexo]
-      LEFT JOIN [Estado Civil] AS esc ON en3.[Id Estado Civil] = esc.[Id Estado Civil]
-      LEFT JOIN EntidadVI AS en6 ON en.[Documento Entidad] = en6.[Documento Entidad]
-      INNER JOIN Ocupación AS ocu ON en6.[Id Ocupación] = ocu.[Id Ocupación]
-      LEFT JOIN EntidadXXIV AS en24 ON en.[Documento Entidad] = en24.[Documento Entidad]
-      INNER JOIN [Tipo de Afiliado] AS tpa ON en24.[Id Tipo de Afiliado] = tpa.[Id Tipo de Afiliado]
-      LEFT JOIN Entidad AS enr ON en3.[Documento Responsable] = enr.[Documento Entidad]
-      LEFT JOIN [Unidad de Medida Edad] AS ume ON en3.[Id Unidad de Medida Edad] = ume.[Id Unidad de Medida Edad]
-      WHERE en.[Documento Entidad] = @0
+      SELECT [Nombre Paciente],
+             [Documento Paciente],
+             [Id Tipo Documento],
+             [Tipo Documento],
+             [Primer Apellido Paciente],
+             [Segundo Apellido Paciente],
+             [Primer Nombre Paciente],
+             [Segundo Nombre Paciente],
+             [Direccion Paciente],
+             [Id Ciudad],
+             Ciudad,
+             [Celular Paciente],
+             [Fecha Nacimiento Paciente],
+             [Edad Paciente],
+             [Id Unidad de Medida Edad],
+             [Descripción Unidad de Medida Edad],
+             [Id Sexo],
+             Sexo,
+             [Id Estado Civil],
+             [Estado Civil],
+             [Id Ocupación],
+             Ocupación,
+             [Id Tipo de Afiliado],
+             [Descripción Tipo de Afiliado],
+             [Documento EPS],
+             [Nombre Responsable],
+             [Id Parentesco],
+             [Teléfono Responsable]
+      FROM dbo.[Lite Cnsta HcPacienteCabecera]
+      WHERE [Documento Paciente] = @0
     `,
       [documento],
     );
@@ -485,6 +1171,11 @@ export class EvolucionService {
         descripcionOcupacion: strOrNull(row['DescripciónOcupación']),
         alergias: strOrNull(row.Alergias),
         alergeno: strOrNull(row.Alergeno),
+        ...resolveFotoEntidad(
+          this.config,
+          await getFotoEntidadFileName(this.dataSource, doc),
+          doc,
+        ),
       };
     }
 
@@ -499,23 +1190,22 @@ export class EvolucionService {
       Record<string, string | number | null>[]
     >(
       `
-      SELECT Ciudad.[Id Ciudad],
-             en3.[Id Estado Civil],
-             en24.[Documento Entidad Prepago] AS [Documento EPS],
-             en24.[Id Tipo de Afiliado],
-             en3.[Id Parentesco],
-             en3.[Acompañante EntidadIII] AS [Nombre Responsable],
-             en3.[Tel Acompañante EntidadIII] AS [Teléfono Responsable],
-             en3.[Id Unidad de Medida Edad],
-             ume.[Descripción Unidad de Medida Edad]
-      FROM Entidad AS en
-      LEFT JOIN EntidadII AS en2 ON en.[Documento Entidad] = en2.[Documento Entidad]
-      LEFT JOIN EntidadIII AS en3 ON en.[Documento Entidad] = en3.[Documento Entidad]
-      LEFT JOIN Ciudad ON en2.[Id Ciudad] = Ciudad.[Id Ciudad]
-      LEFT JOIN EntidadXXIV AS en24 ON en.[Documento Entidad] = en24.[Documento Entidad]
-      LEFT JOIN [Unidad de Medida Edad] AS ume
-             ON en3.[Id Unidad de Medida Edad] = ume.[Id Unidad de Medida Edad]
-      WHERE en.[Documento Entidad] = @0
+      SELECT [Id Ciudad],
+             [Id Estado Civil],
+             [Documento EPS],
+             [Nombre EPS],
+             [Id Tipo de Afiliado],
+             [Tipo de Afiliado],
+             [Teléfono 1],
+             Celular,
+             Email,
+             [Id Parentesco],
+             [Nombre Responsable],
+             [Teléfono Responsable],
+             [Id Unidad de Medida Edad],
+             [Descripción Unidad de Medida Edad]
+      FROM dbo.[Lite Cnsta HcPacienteSnapshot]
+      WHERE [Documento Entidad] = @0
     `,
       [documento],
     );
@@ -525,7 +1215,12 @@ export class EvolucionService {
       idListaCiudad: numOrNull(row['Id Ciudad']),
       idEstadoCivil: numOrNull(row['Id Estado Civil']),
       documentoAseguradora: strOrNull(row['Documento EPS']),
+      nombreAseguradora: strOrNull(row['Nombre EPS']),
       idTipoAfiliado: numOrNull(row['Id Tipo de Afiliado']),
+      tipoAfiliado: strOrNull(row['Tipo de Afiliado']),
+      telefono1: strOrNull(row['Teléfono 1']),
+      celular: strOrNull(row.Celular),
+      email: strOrNull(row.Email),
       idParentescoResponsable: numOrNull(row['Id Parentesco']),
       nombreResponsable: strOrNull(row['Nombre Responsable']),
       telefonoResponsable: strOrNull(row['Teléfono Responsable']),
@@ -849,9 +1544,36 @@ export class EvolucionService {
           label: String(r.DescripcionOcupacion ?? ''),
         }));
       }
+      case 'parentesco':
+        return this.listParentesco(q);
       default:
         return [];
     }
+  }
+
+  /** Catálogo desde la tabla [Parentesco] (Id Estado 7 = activo). */
+  async listParentesco(q?: string): Promise<CatalogoPacienteItemDto[]> {
+    const term = q?.trim();
+    const like = term ? `%${term}%` : null;
+    const rows = await this.dataSource.query<Record<string, unknown>[]>(
+      like
+        ? `SELECT [Id Parentesco], [Parentesco]
+           FROM [Parentesco]
+           WHERE [Id Estado] = 7
+             AND [Parentesco] LIKE @0
+           ORDER BY [Orden Parentesco], [Parentesco]`
+        : `SELECT [Id Parentesco], [Parentesco]
+           FROM [Parentesco]
+           WHERE [Id Estado] = 7
+           ORDER BY [Orden Parentesco], [Parentesco]`,
+      like ? [like] : [],
+    );
+    return rows
+      .map((r) => ({
+        id: Number(r['Id Parentesco']),
+        label: String(r.Parentesco ?? r['Parentesco'] ?? '').trim(),
+      }))
+      .filter((r) => Number.isFinite(r.id) && r.label !== '');
   }
 
   async listTiposEvaluacion(): Promise<TipoEvaluacionDto[]> {
@@ -859,8 +1581,7 @@ export class EvolucionService {
       Record<string, string | number | null>[]
     >(
       `SELECT [Id Tipo de Evaluación], [Tipo de Evaluación]
-       FROM [Tipo de Evaluación]
-       WHERE [Id Estado] = 7`,
+       FROM dbo.[Lite Cnsta TipoEvaluacion]`,
     );
 
     return rows.map((row) => ({
@@ -876,7 +1597,7 @@ export class EvolucionService {
       return explicit.trim();
     }
     const rows = await this.dataSource.query<{ DocumentoEmpresa: string }[]>(
-      `SELECT TOP 1 [Documento Empresa] AS DocumentoEmpresa FROM Empresa`,
+      `SELECT TOP 1 DocumentoEmpresa FROM dbo.[Lite Cnsta Empresa]`,
     );
     if (!rows.length) {
       throw new NotFoundException('No hay empresa en catálogo');
@@ -884,13 +1605,48 @@ export class EvolucionService {
     return rows[0].DocumentoEmpresa;
   }
 
-  async createEvaluacionSinRips(
+  /** Si el profesional no tiene terminal, se usa 6326 de forma temporal. */
+  private async resolveIdTerminal(documentoEntidad: string): Promise<number> {
+    const rows = await this.dataSource.query<{ idTerminal: number | null }[]>(
+      `SELECT TOP 1 [Id Terminal] AS idTerminal
+       FROM Entidad
+       WHERE [Documento Entidad] = @0`,
+      [documentoEntidad],
+    );
+    const n = rows[0]?.idTerminal != null ? Number(rows[0].idTerminal) : 0;
+    if (!Number.isFinite(n) || n === 0) {
+      return 1;
+    }
+    return n;
+  }
+
+  /** Guarda el nombre de la EPS/aseguradora, no el NIT. */
+  private async resolveNombreAseguradora(
+    value: string | undefined,
+  ): Promise<string | null> {
+    const raw = strOrNullIfEmpty(value);
+    if (!raw) return null;
+    const rows = await this.dataSource.query<{ nombre: string | null }[]>(
+      `SELECT TOP 1 [Nombre Completo Entidad] AS nombre
+       FROM Entidad
+       WHERE [Documento Entidad] = @0`,
+      [raw],
+    );
+    const nombre = rows[0]?.nombre?.trim();
+    return nombre || raw;
+  }
+
+  async createEvaluacion(
     user: JwtPayload,
     dto: CreateEvaluacionDto,
   ): Promise<{ idEvaluacion: number }> {
     const docEmpresa = await this.resolveDocumentoEmpresa(dto.documentoEmpresa);
     const tipo = dto.idTipoEvaluacion ?? 1;
     const docUsuario = user.documentoEntidad;
+    const idTerminal = await this.resolveIdTerminal(docUsuario);
+    const nombreAseguradora = await this.resolveNombreAseguradora(
+      dto.documentoAseguradora,
+    );
     const fechaNac = new Date(dto.fechaNacimiento);
     if (Number.isNaN(fechaNac.getTime())) {
       throw new BadRequestException('fechaNacimiento inválida');
@@ -918,7 +1674,7 @@ export class EvolucionService {
       idSexo,
       optionalIntFk(dto.idEstadoCivil),
       optionalIntFk(dto.idOcupacion),
-      strOrNullIfEmpty(dto.documentoAseguradora),
+      nombreAseguradora,
       optionalIntFk(dto.idTipoAfiliado),
       strOrNullIfEmpty(dto.responsableNombre),
       optionalIntFk(dto.idParentescoResponsable),
@@ -926,6 +1682,7 @@ export class EvolucionService {
       docUsuario,
       docEmpresa,
       docUsuario,
+      idTerminal,
     ];
 
     // OUTPUT INTO: triggers en tabla; Id Estado 8 = Abierto (listEvolucionesMedicas).
@@ -942,10 +1699,10 @@ export class EvolucionService {
          [Id Estado], [Id Estado Civil], [Id Ocupación], [Documento Aseguradora], [Id Tipo de Afiliado],
          [Responsable Evaluación Entidad], [Id Parentesco Responsable], [Teléfono Responsable],
          [Documento Usuario], [Documento Empresa], [Documento Profesional], [Id Estado Web], [Con Orden],
-         [Sincronizado], [PreguntarControl], [Rips])
+         [Sincronizado], [PreguntarControl], [Rips], [Id Terminal])
       OUTPUT INSERTED.[Id Evaluación Entidad] INTO @InsertedIds(id)
       VALUES
-        (@0, SYSUTCDATETIME(), @1, @2, @3, @4, @5, @6, @7, 0, @8, @9, @10, @11, @12, @13, 8, @14, @15, @16, @17, @18, @19, @20, @21, @22, @23, 1, 0, 0, 0, 0);
+        (@0, SYSUTCDATETIME(), @1, @2, @3, @4, @5, @6, @7, 0, @8, @9, @10, @11, @12, @13, 8, @14, @15, @16, @17, @18, @19, @20, @21, @22, @23, 1, 0, 0, 0, 0, @24);
 
       SELECT COALESCE(
         (SELECT TOP 1 id FROM @InsertedIds),
@@ -964,6 +1721,15 @@ export class EvolucionService {
     }
     if (id == null) {
       throw new BadRequestException('No se pudo crear la evaluación');
+    }
+
+    if (nombreAseguradora) {
+      await this.dataSource.query(
+        `UPDATE [Evaluación Entidad]
+         SET [Documento Aseguradora] = @0
+         WHERE [Id Evaluación Entidad] = @1`,
+        [nombreAseguradora, id],
+      );
     }
 
     return { idEvaluacion: id };
@@ -990,13 +1756,13 @@ export class EvolucionService {
       setParts.push(
         `[Diagnóstico General Evaluación Entidad] = @${params.length}`,
       );
-      params.push(dto.diagnosticoGeneral);
+      params.push(new MssqlParameter(dto.diagnosticoGeneral, 'nvarchar'));
     }
     if (dto.diagnosticoEspecifico !== undefined) {
       setParts.push(
         `[Diagnóstico Específico Evaluación Entidad] = @${params.length}`,
       );
-      params.push(dto.diagnosticoEspecifico);
+      params.push(new MssqlParameter(dto.diagnosticoEspecifico, 'nvarchar'));
     }
     const idPlaceholder = `@${params.length}`;
     params.push(idEvaluacion);
@@ -1004,7 +1770,8 @@ export class EvolucionService {
     await this.dataSource.query(
       `UPDATE [Evaluación Entidad]
        SET ${setParts.join(', ')}
-       WHERE [Id Evaluación Entidad] = ${idPlaceholder} AND [Id Tipo de Evaluación] = 1`,
+       WHERE [Id Evaluación Entidad] = ${idPlaceholder}
+         AND [Id Tipo de Evaluación] IN (${TIPOS_NOTA_CLINICA})`,
       params,
     );
   }
@@ -1015,20 +1782,14 @@ export class EvolucionService {
     const rows = await this.dataSource.query<{ estado: number | null }[]>(
       `SELECT [Id Estado] AS estado
        FROM [Evaluación Entidad]
-       WHERE [Id Evaluación Entidad] = @0 AND [Id Tipo de Evaluación] = 1`,
+       WHERE [Id Evaluación Entidad] = @0
+         AND [Id Tipo de Evaluación] IN (${TIPOS_NOTA_CLINICA})`,
       [idEvaluacion],
     );
     if (!rows.length) {
       return null;
     }
     return rows[0].estado != null ? Number(rows[0].estado) : null;
-  }
-
-  private async assertEvolucionMedicaExiste(idEvaluacion: number): Promise<void> {
-    const estado = await this.getEvolucionEstadoById(idEvaluacion);
-    if (estado == null) {
-      throw new NotFoundException('Evolución no encontrada');
-    }
   }
 
   private async assertEvolucionMedicaEditable(idEvaluacion: number): Promise<void> {
@@ -1043,108 +1804,16 @@ export class EvolucionService {
     }
   }
 
-  async listRipsPorEvaluacion(idEvaluacion: number): Promise<unknown[]> {
-    await this.assertEvolucionMedicaExiste(idEvaluacion);
-    return this.dataSource.query(
-      `SELECT *
-       FROM [Evaluación Entidad Rips]
-       WHERE [Id Evaluación Entidad] = @0
-       ORDER BY [Id Evaluación Entidad Rips]`,
-      [idEvaluacion],
+  async savePacienteFoto(
+    documentoParam: string,
+    file: UploadedFotoFile,
+  ): Promise<{ fotoUrl: string | null; fotoArchivo: string | null }> {
+    return saveEntidadFoto(
+      this.dataSource,
+      this.config,
+      documentoParam,
+      file,
     );
-  }
-
-  async registrarRips(
-    idEvaluacion: number,
-    dto: RegistrarRipsDto,
-  ): Promise<{ ok: true }> {
-    await this.assertEvolucionMedicaEditable(idEvaluacion);
-
-    if (dto.actoQuirurgico === 1) {
-      if (dto.idCausaExterna == null || dto.idTipoDiagnosticoPrincipal == null) {
-        throw new BadRequestException(
-          'Para acto consulta (AC) indique causa externa y tipo de diagnóstico principal',
-        );
-      }
-    } else {
-      if (dto.idViaIngresoUsuario == null) {
-        throw new BadRequestException(
-          'Para acto procedimiento (AP) indique vía de ingreso del usuario',
-        );
-      }
-    }
-
-    const cod2 =
-      dto.codigoRips2 != null && String(dto.codigoRips2).trim() !== ''
-        ? String(dto.codigoRips2).trim()
-        : null;
-    const dx2 =
-      dto.diagnosticoRips2 != null && String(dto.diagnosticoRips2).trim() !== ''
-        ? String(dto.diagnosticoRips2).trim()
-        : null;
-
-    await this.dataSource.transaction(async (em) => {
-      if (dto.actoQuirurgico === 1) {
-        await em.query(
-          `
-          INSERT INTO [Evaluación Entidad Rips]
-            ([Id Evaluación Entidad], [Codigo Rips], [Codigo Rips2], [Diagnostico Rips], [Diagnostico Rips2],
-             [Id Tipo de Rips], [Documento Tipo Rips], [Id Finalidad Consulta], [Id Causa Externa],
-             [Id Tipo de Diagnóstico Principal], [Id Acto Quirúrgico], [Id Modalidad Atencion],
-             [Id Grupo Servicios], [Id Servicios])
-          VALUES
-            (@0, @1, @2, @3, @4, @5, @6, @7, @8, @9, 1, @10, @11, @12)
-        `,
-          [
-            idEvaluacion,
-            dto.codigoRips.trim(),
-            cod2,
-            dto.diagnosticoRips.trim(),
-            dx2,
-            dto.idTipoRips,
-            dto.documentoTipoRips.trim(),
-            dto.idFinalidadConsulta,
-            dto.idCausaExterna,
-            dto.idTipoDiagnosticoPrincipal,
-            dto.idModalidadAtencion,
-            dto.idGrupoServicios,
-            dto.idServicios,
-          ],
-        );
-      } else {
-        await em.query(
-          `
-          INSERT INTO [Evaluación Entidad Rips]
-            ([Id Evaluación Entidad], [Codigo Rips], [Codigo Rips2], [Diagnostico Rips], [Diagnostico Rips2],
-             [Id Tipo de Rips], [Documento Tipo Rips], [Id Finalidad Consulta], [Id Acto Quirúrgico],
-             [Id Modalidad Atencion], [Id Grupo Servicios], [Id Servicios], [Id Via Ingreso Usuario])
-          VALUES
-            (@0, @1, @2, @3, @4, @5, @6, @7, 2, @8, @9, @10, @11)
-        `,
-          [
-            idEvaluacion,
-            dto.codigoRips.trim(),
-            cod2,
-            dto.diagnosticoRips.trim(),
-            dx2,
-            dto.idTipoRips,
-            dto.documentoTipoRips.trim(),
-            dto.idFinalidadConsulta,
-            dto.idModalidadAtencion,
-            dto.idGrupoServicios,
-            dto.idServicios,
-            dto.idViaIngresoUsuario,
-          ],
-        );
-      }
-
-      await em.query(
-        `UPDATE [Evaluación Entidad] SET [Rips] = 1 WHERE [Id Evaluación Entidad] = @0`,
-        [idEvaluacion],
-      );
-    });
-
-    return { ok: true };
   }
 
   async cerrarEvolucion(idEvaluacion: number): Promise<{ ok: true }> {
@@ -1159,198 +1828,10 @@ export class EvolucionService {
     await this.dataSource.query(
       `UPDATE [Evaluación Entidad]
        SET [Id Estado] = 7
-       WHERE [Id Evaluación Entidad] = @0 AND [Id Tipo de Evaluación] = 1`,
+       WHERE [Id Evaluación Entidad] = @0
+         AND [Id Tipo de Evaluación] IN (${TIPOS_NOTA_CLINICA})`,
       [idEvaluacion],
     );
     return { ok: true };
-  }
-
-  async catalogoRipsTipoRips() {
-    const rows = await this.dataSource.query<Record<string, unknown>[]>(
-      `SELECT [Id Tipo Rips], [Tipo Rips], [Código Tipo Rips]
-       FROM [Tipo Rips]
-       WHERE [Tipo Rips] IS NOT NULL AND [Id Estado] = 7`,
-    );
-    return rows.map((row) => ({
-      idTipoRips: row['Id Tipo Rips'],
-      descripcionTipoRips: row['Tipo Rips'],
-      codigoTipoRips: row['Código Tipo Rips'],
-    }));
-  }
-
-  async catalogoRipsEntidadesPorFuncion(idFuncion: number) {
-    const rows = await this.dataSource.query<Record<string, unknown>[]>(
-      `SELECT en.[Documento Entidad], en.[Nombre Completo Entidad]
-       FROM [Función Por Entidad] AS fe
-       INNER JOIN Entidad AS en ON fe.[Documento Entidad] = en.[Documento Entidad]
-       INNER JOIN Función AS f ON fe.[Id Función] = f.[Id Función]
-       WHERE f.[Id Función] = @0
-       ORDER BY en.[Nombre Completo Entidad] ASC`,
-      [idFuncion],
-    );
-    return rows.map((row) => ({
-      idEntidad: row['Documento Entidad'],
-      descripcionEntidad: row['Nombre Completo Entidad'],
-    }));
-  }
-
-  async catalogoRipsModalidadAtencion() {
-    const rows = await this.dataSource.query<Record<string, unknown>[]>(
-      `SELECT [Id Modalidad Atencion], [Nombre Modalidad Atencion]
-       FROM [RIPS Modalidad Atención]
-       WHERE [Id Estado] = 7`,
-    );
-    return rows.map((row) => ({
-      codigoModalidad: row['Id Modalidad Atencion'],
-      nombreModalidad: row['Nombre Modalidad Atencion'],
-    }));
-  }
-
-  async catalogoRipsGrupoServicios() {
-    const rows = await this.dataSource.query<Record<string, unknown>[]>(
-      `SELECT [Id Grupo Servicios], [Nombre Grupo Servicios]
-       FROM [RIPS Grupo Servicios]
-       WHERE [Id Estado] = 7`,
-    );
-    return rows.map((row) => ({
-      codigoServicios: row['Id Grupo Servicios'],
-      nombreServicios: row['Nombre Grupo Servicios'],
-    }));
-  }
-
-  async catalogoRipsServicios() {
-    const rows = await this.dataSource.query<Record<string, unknown>[]>(
-      `SELECT [Id Servicios], [Nombre Servicios]
-       FROM [RIPS Servicios]
-       WHERE [Id Estado] = 7`,
-    );
-    return rows.map((row) => ({
-      codigoServicios: row['Id Servicios'],
-      nombreServicios: row['Nombre Servicios'],
-    }));
-  }
-
-  async catalogoRipsFinalidadConsulta() {
-    const rows = await this.dataSource.query<Record<string, unknown>[]>(
-      `SELECT [Id Finalidad Consulta], [Descripción Finalidad Consulta]
-       FROM [Finalidad Consulta]
-       WHERE ([Id Finalidad Consulta] <> 1) AND ([Id Estado] = 7)`,
-    );
-    return rows.map((row) => ({
-      codigoFinalidad: row['Id Finalidad Consulta'],
-      nombreFinalidad: row['Descripción Finalidad Consulta'],
-    }));
-  }
-
-  async catalogoRipsFinalidadProcedimiento() {
-    const rows = await this.dataSource.query<Record<string, unknown>[]>(
-      `SELECT [Id Finalidad del Procedimiento], [Descripción Finalidad del Procedimiento]
-       FROM [Finalidad del Procedimiento]
-       WHERE ([Id Finalidad del Procedimiento] <> 1) AND ([Id Estado] = 7)`,
-    );
-    return rows.map((row) => ({
-      codigoFinalidad: row['Id Finalidad del Procedimiento'],
-      nombreFinalidad: row['Descripción Finalidad del Procedimiento'],
-    }));
-  }
-
-  async catalogoRipsCausaExterna() {
-    const rows = await this.dataSource.query<Record<string, unknown>[]>(
-      `SELECT [Id Causa Externa], [Descripción Causa Externa]
-       FROM [Causa Externa]
-       WHERE ([Id Causa Externa] <> 1) AND ([Id Estado] = 7)`,
-    );
-    return rows.map((row) => ({
-      codigoCausa: row['Id Causa Externa'],
-      nombreCausa: row['Descripción Causa Externa'],
-    }));
-  }
-
-  async catalogoRipsTipoDiagnostico() {
-    const rows = await this.dataSource.query<Record<string, unknown>[]>(
-      `SELECT [Id Tipo de Diagnóstico Principal], [Descripción Tipo de Diagnóstico Principal]
-       FROM [Tipo de Diagnóstico Principal]
-       WHERE [Id Estado] = 7 AND [Código Tipo de Diagnóstico Principal] IS NOT NULL`,
-    );
-    return rows.map((row) => ({
-      codigoObjeto: row['Id Tipo de Diagnóstico Principal'],
-      descripcionObjeto: row['Descripción Tipo de Diagnóstico Principal'],
-    }));
-  }
-
-  async catalogoRipsViaIngreso() {
-    const rows = await this.dataSource.query<Record<string, unknown>[]>(
-      `SELECT [Id Via Ingreso Usuario], [Nombre Via Ingreso Usuario]
-       FROM [RIPS Via Ingreso Usuario]
-       WHERE [Id Estado] = 7`,
-    );
-    return rows.map((row) => ({
-      codigoObjeto: row['Id Via Ingreso Usuario'],
-      descripcionObjeto: row['Nombre Via Ingreso Usuario'],
-    }));
-  }
-
-  /** CUPS por acto (AC/AP). Sin `q` o q corto: TOP 10; con q: búsqueda por código/nombre. */
-  async catalogoRipsCupsPorTipo(tipo: string, q?: string) {
-    const t = tipo.trim().toUpperCase();
-    if (t !== 'AC' && t !== 'AP') {
-      throw new BadRequestException('tipo debe ser AC o AP');
-    }
-    const term = (q ?? '').trim();
-    const rows =
-      term.length < 2
-        ? await this.dataSource.query<Record<string, unknown>[]>(
-            `
-      SELECT TOP 10 Codigo, Descripcion, Nombre, Tipo
-      FROM [Cnsta Relacionador Cups]
-      WHERE Tipo = @0
-      ORDER BY Nombre
-    `,
-            [t],
-          )
-        : await this.dataSource.query<Record<string, unknown>[]>(
-            `
-      SELECT TOP 100 Codigo, Descripcion, Nombre, Tipo
-      FROM [Cnsta Relacionador Cups]
-      WHERE Tipo = @0
-        AND (Codigo LIKE @1 OR Nombre LIKE @1 OR Descripcion LIKE @1)
-      ORDER BY Nombre
-    `,
-            [t, `%${term}%`],
-          );
-    return rows.map((row) => ({
-      codigo: row.Codigo != null ? String(row.Codigo) : '',
-      nombre: row.Nombre != null ? String(row.Nombre) : '',
-      descripcion: row.Descripcion != null ? String(row.Descripcion) : null,
-      tipo: row.Tipo != null ? String(row.Tipo) : t,
-    }));
-  }
-
-  /** CIE-10. Sin `q` o q corto: TOP 10; con q: búsqueda (como /apiV3/Cie/:Busqueda). */
-  async catalogoRipsCie10(q?: string) {
-    const term = (q ?? '').trim();
-    const rows =
-      term.length < 2
-        ? await this.dataSource.query<Record<string, unknown>[]>(
-            `
-      SELECT TOP 10 Codigo, Nombre, Descripcion
-      FROM [Cnsta Relacionador Cie10]
-      ORDER BY Codigo
-    `,
-          )
-        : await this.dataSource.query<Record<string, unknown>[]>(
-            `
-      SELECT TOP 100 Codigo, Nombre, Descripcion
-      FROM [Cnsta Relacionador Cie10]
-      WHERE Codigo LIKE @0 OR Nombre LIKE @0 OR Descripcion LIKE @0
-      ORDER BY Codigo
-    `,
-            [`%${term}%`],
-          );
-    return rows.map((row) => ({
-      codigo: row.Codigo != null ? String(row.Codigo) : '',
-      nombre: row.Nombre != null ? String(row.Nombre) : '',
-      descripcion: row.Descripcion != null ? String(row.Descripcion) : null,
-    }));
   }
 }

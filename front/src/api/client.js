@@ -11,6 +11,14 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+    const headers = config.headers;
+    if (headers && typeof headers.delete === 'function') {
+      headers.delete('Content-Type');
+    } else if (headers) {
+      delete headers['Content-Type'];
+    }
+  }
   return config;
 });
 
@@ -34,6 +42,19 @@ export async function fetchMe() {
   return data;
 }
 
+export async function updateMe(body) {
+  const { data } = await api.patch('/auth/me', body);
+  return data;
+}
+
+/** @param {File} file */
+export async function uploadMeFoto(file) {
+  const body = new FormData();
+  body.append('file', file);
+  const { data } = await api.post('/auth/me/foto', body);
+  return data;
+}
+
 export async function fetchCompanies() {
   const { data } = await api.get('/company');
   return data;
@@ -54,6 +75,92 @@ export async function fetchHealthDb() {
   const { data } = await axios.get(`${base}/health/db`);
   return data;
 }
+
+/** @param {string} documento */
+export async function fetchPacienteAnexos(documento) {
+  const { data } = await api.get(
+    `/evolucion/paciente/${encodeURIComponent(documento)}/anexos`,
+  );
+  return data;
+}
+
+/** @param {string} documento @param {File} file @param {string} nombre */
+export async function createPacienteAnexo(documento, file, nombre) {
+  const body = new FormData();
+  body.append('file', file);
+  if (nombre) body.append('nombre', nombre);
+  const { data } = await api.post(
+    `/evolucion/paciente/${encodeURIComponent(documento)}/anexos`,
+    body,
+  );
+  return data;
+}
+
+/** @param {string} documento @param {number} id @param {File} file */
+export async function uploadPacienteAnexoArchivo(documento, id, file) {
+  const body = new FormData();
+  body.append('file', file);
+  const { data } = await api.post(
+    `/evolucion/paciente/${encodeURIComponent(documento)}/anexos/${id}/archivo`,
+    body,
+  );
+  return data;
+}
+
+function parseContentDispositionFileName(header) {
+  if (!header) return '';
+  const star = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(header);
+  if (star?.[1]) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"(.*)"$/, '$1'));
+    } catch {
+      /* ignore */
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  return plain?.[1]?.trim() ?? '';
+}
+
+async function messageFromAxiosError(e, fallback) {
+  const data = e.response?.data;
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    try {
+      const parsed = JSON.parse(await data.text());
+      const msg = parsed.message ?? parsed.error;
+      return Array.isArray(msg) ? msg.join(', ') : msg || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  const msg = data?.message ?? data?.error ?? e.message;
+  return Array.isArray(msg) ? msg.join(', ') : msg || fallback;
+}
+
+/** @param {string} documento @param {number} id */
+export async function fetchPacienteAnexoArchivo(documento, id) {
+  const res = await api.get(
+    `/evolucion/paciente/${encodeURIComponent(documento)}/anexos/${id}/archivo`,
+    { responseType: 'blob' },
+  );
+  const blob = res.data;
+  if (blob?.type && blob.type.includes('application/json')) {
+    let msg = 'No se pudo abrir el documento';
+    try {
+      const parsed = JSON.parse(await blob.text());
+      msg = parsed.message ?? parsed.error ?? msg;
+      if (Array.isArray(msg)) msg = msg.join(', ');
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  const fileName = parseContentDispositionFileName(
+    res.headers?.['content-disposition'],
+  );
+  return { blob, fileName };
+}
+
+export { messageFromAxiosError };
 
 /** @param {string} documento */
 export async function fetchEvolucionesPaciente(documento) {
@@ -88,6 +195,17 @@ export async function updatePacienteDatos(documento, body) {
   return data;
 }
 
+/** @param {string} documento @param {File} file */
+export async function uploadPacienteFoto(documento, file) {
+  const body = new FormData();
+  body.append('file', file);
+  const { data } = await api.post(
+    `/evolucion/paciente/${encodeURIComponent(documento)}/foto`,
+    body,
+  );
+  return data;
+}
+
 /** @param {string} segment @param {string} [q] */
 export async function fetchPacienteCatalog(segment, q) {
   const { data } = await api.get(
@@ -97,14 +215,83 @@ export async function fetchPacienteCatalog(segment, q) {
   return data;
 }
 
+export async function fetchParentescoCatalog(q) {
+  const { data } = await api.get('/evolucion/catalog/parentesco', {
+    params: q ? { q } : {},
+  });
+  return data;
+}
+
+export async function fetchFormatosHc() {
+  const { data } = await api.get('/evolucion/formatos');
+  return data;
+}
+
+/** @param {string} fileName */
+export async function fetchFormatoHcContenido(fileName) {
+  const { data } = await api.get('/evolucion/formatos/contenido', {
+    params: { file: fileName },
+  });
+  return data;
+}
+
 export async function fetchTiposEvaluacion() {
   const { data } = await api.get('/evolucion/tipos-evaluacion');
+  return data;
+}
+
+/** @param {string} documento @param {string} desde @param {string} hasta */
+export async function fetchHistorialHc(documento, desde, hasta) {
+  const { data } = await api.get(
+    `/evolucion/paciente/${encodeURIComponent(documento)}/historial`,
+    { params: { desde, hasta } },
+  );
+  return data;
+}
+
+/** @param {string} documento */
+export async function fetchPacienteObservaciones(documento) {
+  const { data } = await api.get(
+    `/evolucion/paciente/${encodeURIComponent(documento)}/observaciones`,
+  );
+  return data;
+}
+
+/** @param {string} documento @param {string} observacion */
+export async function createPacienteObservacion(documento, observacion) {
+  const { data } = await api.post(
+    `/evolucion/paciente/${encodeURIComponent(documento)}/observaciones`,
+    { observacion },
+  );
+  return data;
+}
+
+/** @param {string} documento @param {number} id @param {{ observacion: string, idEstado: number }} body */
+export async function updatePacienteObservacion(documento, id, body) {
+  const { data } = await api.patch(
+    `/evolucion/paciente/${encodeURIComponent(documento)}/observaciones/${id}`,
+    body,
+  );
   return data;
 }
 
 /** @param {number} id */
 export async function fetchEvolucionDetalle(id) {
   const { data } = await api.get(`/evolucion/${id}`);
+  return data;
+}
+
+/** @param {number} id @param {string} documento */
+export async function fetchNotaAclaratoria(id, documento) {
+  const { data } = await api.get(`/evolucion/notas-aclaratorias/${id}`, {
+    params: { documento },
+  });
+  return data;
+}
+
+/** @param {{ documentoPaciente: string, nota: string }} body */
+export async function createNotaAclaratoria(body) {
+  const { data } = await api.post('/evolucion/notas-aclaratorias', body);
   return data;
 }
 
@@ -123,41 +310,6 @@ export async function patchEvolucionDiagnosticos(id, body) {
 /** @param {number} id */
 export async function patchCerrarEvolucion(id) {
   const { data } = await api.patch(`/evolucion/${id}/cerrar`);
-  return data;
-}
-
-/** @param {string} segment last path of /evolucion/catalog/rips/… */
-export async function fetchEvolucionRipsCatalog(segment) {
-  const { data } = await api.get(`/evolucion/catalog/rips/${segment}`);
-  return data;
-}
-
-/** @param {'AC'|'AP'} tipo @param {string} [q] */
-export async function fetchRipsCups(tipo, q) {
-  const { data } = await api.get(
-    `/evolucion/catalog/rips/cups/${encodeURIComponent(tipo)}`,
-    { params: q != null && q !== '' ? { q } : {} },
-  );
-  return data;
-}
-
-/** @param {string} [q] */
-export async function fetchRipsCie(q) {
-  const { data } = await api.get('/evolucion/catalog/rips/cie', {
-    params: q != null && q !== '' ? { q } : {},
-  });
-  return data;
-}
-
-/** @param {number} evalId */
-export async function fetchEvolucionRipsLines(evalId) {
-  const { data } = await api.get(`/evolucion/${evalId}/rips`);
-  return data;
-}
-
-/** @param {number} evalId @param {Record<string, unknown>} body */
-export async function postEvolucionRips(evalId, body) {
-  const { data } = await api.post(`/evolucion/${evalId}/rips`, body);
   return data;
 }
 
@@ -185,5 +337,35 @@ export async function fetchRdaCatalogFixed(segment, q) {
   const { data } = await api.get(`/rda/catalog/${segment}`, {
     params: q ? { q } : {},
   });
+  return data;
+}
+
+/** @param {string} fecha YYYY-MM-DD */
+export async function fetchAgendaCitas(fecha) {
+  const { data } = await api.get('/agenda/citas', { params: { fecha } });
+  return data;
+}
+
+export async function fetchAgendaProfesionales() {
+  const { data } = await api.get('/agenda/profesionales');
+  return data;
+}
+
+export async function fetchAgendaTiposCompromiso() {
+  const { data } = await api.get('/agenda/tipos-compromiso');
+  return data;
+}
+
+/** @param {string} [q] */
+export async function fetchAgendaProcedimientos(q) {
+  const { data } = await api.get('/agenda/procedimientos', {
+    params: q ? { q } : {},
+  });
+  return data;
+}
+
+/** @param {object} body */
+export async function createAgendaCita(body) {
+  const { data } = await api.post('/agenda/citas', body);
   return data;
 }

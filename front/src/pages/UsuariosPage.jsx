@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { fetchUsers } from '../api/client';
+import { PatientEditModal } from '../components/PatientEditModal';
 
 /**
  * Misma fuente de datos que CeereLite: GET /api/infousuarios → aquí GET /api/v1/users
@@ -14,9 +15,10 @@ export default function UsuariosPage() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
   const [openMenu, setOpenMenu] = useState(null);
+  const [editPatient, setEditPatient] = useState(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts = {}) => {
+    if (!opts.silent) setLoading(true);
     setError('');
     try {
       const data = await fetchUsers();
@@ -30,7 +32,7 @@ export default function UsuariosPage() {
       );
       setRows([]);
     } finally {
-      setLoading(false);
+      if (!opts.silent) setLoading(false);
     }
   }, []);
 
@@ -72,6 +74,23 @@ export default function UsuariosPage() {
     navigate('/principal/evolucion', {
       state: { documentoPaciente },
     });
+  }
+
+  function openEdit(row) {
+    setOpenMenu(null);
+    setEditPatient({
+      documento: row.id,
+      nombre: row.name ?? '',
+    });
+  }
+
+  function closeEdit() {
+    setEditPatient(null);
+  }
+
+  async function handlePatientSaved(opts = {}) {
+    if (!opts.photoOnly) closeEdit();
+    await load({ silent: true });
   }
 
   return (
@@ -192,12 +211,7 @@ export default function UsuariosPage() {
                           <button
                             type="button"
                             className="actions-menu-item"
-                            onClick={() => {
-                              setOpenMenu(null);
-                              window.alert(
-                                'Edición de usuario: pendiente de migrar el modal del sistema anterior.',
-                              );
-                            }}
+                            onClick={() => openEdit(r)}
                           >
                             Editar
                           </button>
@@ -247,6 +261,15 @@ export default function UsuariosPage() {
       <p className="muted">
         <Link to="/principal/home">← Inicio</Link>
       </p>
+
+      {editPatient && (
+        <PatientEditModal
+          documentoPaciente={editPatient.documento}
+          nombrePaciente={editPatient.nombre}
+          onClose={closeEdit}
+          onSaved={(opts) => void handlePatientSaved(opts)}
+        />
+      )}
     </div>
   );
 }

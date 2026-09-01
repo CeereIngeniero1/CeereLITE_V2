@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchPacienteCatalog,
   updatePacienteDatos,
+  uploadPacienteFoto,
 } from '../api/client';
+import { SavingOverlay } from './SavingOverlay';
 
 const CATALOG_KEYS = [
   'tipo-documento',
@@ -170,6 +172,7 @@ export function PatientDataPanel({
   demografia,
   onSaved,
   onFormChange,
+  startEditing = false,
 }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [catalogs, setCatalogs] = useState({});
@@ -177,6 +180,10 @@ export function PatientDataPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [invalidIds, setInvalidIds] = useState(new Set());
+  const [savingLabel, setSavingLabel] = useState('Guardando datos del paciente…');
+  const [fotoPreview, setFotoPreview] = useState('');
+  const fotoInputRef = useRef(null);
+  const skipFormResetRef = useRef(false);
 
   const labels = useMemo(
     () => ({
@@ -195,10 +202,22 @@ export function PatientDataPanel({
   );
 
   useEffect(() => {
+    if (skipFormResetRef.current) {
+      skipFormResetRef.current = false;
+      setFotoPreview((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return '';
+      });
+      return;
+    }
     setForm(demografiaToForm(demografia));
-    setEditing(false);
+    setEditing(!!startEditing);
     setInvalidIds(new Set());
-  }, [demografia, documentoPaciente]);
+    setFotoPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return '';
+    });
+  }, [demografia, documentoPaciente, startEditing]);
 
   useEffect(() => {
     let cancel = false;
@@ -339,6 +358,44 @@ export function PatientDataPanel({
       );
     } finally {
       setSaving(false);
+      setSavingLabel('Guardando datos del paciente…');
+    }
+  }
+
+  async function onFotoSelected(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setError('');
+    if (!file.type.startsWith('image/')) {
+      setError('Seleccione un archivo de imagen');
+      return;
+    }
+    const localUrl = URL.createObjectURL(file);
+    setFotoPreview(localUrl);
+    setSavingLabel('Guardando foto…');
+    setSaving(true);
+    try {
+      const result = await uploadPacienteFoto(documentoPaciente, file);
+      skipFormResetRef.current = true;
+      await onSaved?.({
+        photoOnly: true,
+        fotoUrl: result?.fotoUrl,
+        fotoArchivo: result?.fotoArchivo,
+      });
+    } catch (err) {
+      skipFormResetRef.current = false;
+      setFotoPreview('');
+      URL.revokeObjectURL(localUrl);
+      setError(
+        err.response?.data?.message ??
+          err.response?.data?.error ??
+          err.message ??
+          'No se pudo guardar la foto',
+      );
+    } finally {
+      setSaving(false);
+      setSavingLabel('Guardando datos del paciente…');
     }
   }
 
@@ -352,9 +409,40 @@ export function PatientDataPanel({
 
   return (
     <div className="hc-patient-form">
+      <SavingOverlay show={saving} label={savingLabel} />
       {error && <div className="alert alert-error">{error}</div>}
 
-      <div className="hc-patient-grid hc-patient-grid--form">
+      <div className="hc-patient-layout">
+        <div className="paciente-foto-card">
+          {fotoPreview || demografia.fotoUrl ? (
+            <img
+              className="paciente-foto"
+              src={fotoPreview || demografia.fotoUrl}
+              alt={demografia.nombreCompleto || 'Foto del paciente'}
+            />
+          ) : (
+            <div className="paciente-foto paciente-foto--empty" aria-hidden>
+              Sin foto
+            </div>
+          )}
+          <input
+            ref={fotoInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            hidden
+            onChange={(e) => void onFotoSelected(e)}
+          />
+          <button
+            type="button"
+            className="secondary paciente-foto-btn"
+            disabled={saving}
+            onClick={() => fotoInputRef.current?.click()}
+          >
+            Cambiar foto
+          </button>
+        </div>
+
+        <div className="hc-patient-grid hc-patient-grid--form">
         <CatalogSelect
           label="Tipo documento"
           required
@@ -561,6 +649,7 @@ export function PatientDataPanel({
                 ? 'Guardar cambios'
                 : 'Actualizar datos paciente'}
           </button>
+        </div>
         </div>
       </div>
 

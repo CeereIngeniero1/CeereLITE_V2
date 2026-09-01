@@ -5,12 +5,12 @@ import {
   IsString,
 } from 'class-validator';
 
-/** Cuerpo alineado al POST legacy `insert-evaluacion` con `tipoRIPS === 99999`. */
+/** Cuerpo alineado al POST legacy `insert-evaluacion`. */
 export class CreateEvaluacionDto {
   @IsString()
   documentoPaciente!: string;
 
-  /** Por defecto en servicio: 1 (Evolución médica). */
+  /** 1 = evolución médica (texto). 4 = formato HTML de HC. */
   @IsOptional()
   @IsInt()
   idTipoEvaluacion?: number;

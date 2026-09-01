@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './auth/AuthContext';
+import { ThemeProvider } from './theme/ThemeContext';
 import { PrivateRoute } from './routes/PrivateRoute';
 import { AppLayout } from './layout/AppLayout';
 import LoginPage from './pages/LoginPage';
@@ -7,28 +8,22 @@ import HomePage from './pages/HomePage';
 import PlaceholderPage from './pages/PlaceholderPage';
 import UsuariosPage from './pages/UsuariosPage';
 import EvolucionPage from './pages/EvolucionPage';
+import AgendaPage from './pages/AgendaPage';
 import './index.css';
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <Routes>
+    <ThemeProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
           <Route path="/login" element={<LoginPage />} />
 
           <Route element={<PrivateRoute />}>
             <Route element={<AppLayout />}>
               <Route path="/" element={<Navigate to="/principal/home" replace />} />
               <Route path="/principal/home" element={<HomePage />} />
-              <Route
-                path="/principal/agenda"
-                element={
-                  <PlaceholderPage
-                    title="Agenda"
-                    hint="Aquí irá el calendario y citas (migración desde CeereLite)."
-                  />
-                }
-              />
+              <Route path="/principal/agenda" element={<AgendaPage />} />
               <Route path="/principal/evolucion" element={<EvolucionPage />} />
               <Route
                 path="/principal/facturacion"
@@ -68,15 +63,6 @@ export default function App() {
                 element={<Navigate to="/principal/evolucion" replace />}
               />
               <Route
-                path="/principal/rips"
-                element={
-                  <PlaceholderPage
-                    title="RIPS"
-                    hint="Relacionador, validación y envío."
-                  />
-                }
-              />
-              <Route
                 path="/principal/configuracion"
                 element={
                   <PlaceholderPage
@@ -89,8 +75,9 @@ export default function App() {
           </Route>
 
           <Route path="*" element={<Navigate to="/principal/home" replace />} />
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

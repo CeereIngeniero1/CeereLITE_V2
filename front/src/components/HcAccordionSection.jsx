@@ -1,10 +1,11 @@
 import { useId, useState } from 'react';
 
-/** Módulo plegable estilo panel de HC / RIPS (cabecera + cuerpo). */
+/** Módulo plegable estilo panel de HC (cabecera + cuerpo). */
 export function HcAccordionSection({
   title,
   subtitle,
   icon,
+  headerExtra,
   defaultOpen = true,
   onOpenChange,
   children,
@@ -48,6 +49,9 @@ export function HcAccordionSection({
             ) : null}
           </span>
         </span>
+        {headerExtra ? (
+          <span className="hc-module-head-extra">{headerExtra}</span>
+        ) : null}
         <span className="hc-module-chevron" aria-hidden>
           {open ? '▾' : '▸'}
         </span>

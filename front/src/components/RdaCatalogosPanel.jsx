@@ -83,11 +83,8 @@ export function RdaCatalogosPanel({
         <h3 className="rda-panel-title">RDA — catálogos Res. 1888</h3>
       )}
       <p className="muted rda-panel-hint">
-        Misma base que el Relacionador; úsalos junto con la nota clínica y, cuando
-        exista registro guardado, con RIPS (
-        {evaluacionId != null
-          ? `evolución #${evaluacionId}).`
-          : 'guardá la evolución para asociar RIPS).'}
+        Misma base que el Relacionador; úsalos junto con la nota clínica
+        {evaluacionId != null ? ` (evolución #${evaluacionId})` : ''}.
       </p>
 
       <div

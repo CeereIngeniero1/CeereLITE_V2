@@ -13,9 +13,9 @@ export class CompanyService {
     const rows = await this.dataSource.query<
       { DocumentoEmpresa: string; NombreComercialEmpresa: string }[]
     >(`
-      SELECT [Documento Empresa] AS DocumentoEmpresa,
-             [Nombre Comercial Empresa] AS NombreComercialEmpresa
-      FROM Empresa
+      SELECT DocumentoEmpresa,
+             NombreComercialEmpresa
+      FROM dbo.[Lite Cnsta Empresa]
     `);
 
     if (!rows.length) {
@@ -39,14 +39,13 @@ export class CompanyService {
       }[]
     >(
       `
-      SELECT em.[Nombre Comercial Empresa] AS NombreEmpresa,
-             em.[Documento Empresa] AS DocumentoEmpresa,
-             em3.[Dirección EmpresaIII] AS DireccionEmpresa,
-             em3.[Teléfono No 1 EmpresaIII] AS TelefonoEmpresa,
-             em3.[E-mail 1 EmpresaIII] AS CorreoEmpresa
-      FROM Empresa AS em
-      LEFT JOIN EmpresaIII AS em3 ON em.[Documento Empresa] = em3.[Documento Empresa]
-      WHERE em.[Documento Empresa] = @0
+      SELECT NombreEmpresa,
+             DocumentoEmpresa,
+             DireccionEmpresa,
+             TelefonoEmpresa,
+             CorreoEmpresa
+      FROM dbo.[Lite Cnsta Empresa]
+      WHERE DocumentoEmpresa = @0
     `,
       [docEmpresa],
     );

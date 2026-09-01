@@ -26,7 +26,12 @@ export function AuthProvider({ children }) {
     api
       .fetchMe()
       .then((me) => setUser(me))
-      .catch(() => clearStoredToken())
+      .catch((e) => {
+        if (e.response?.status === 401) {
+          clearStoredToken();
+          setUser(null);
+        }
+      })
       .finally(() => {
         setLoading(false);
         setHydrated(true);
@@ -41,13 +46,28 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (username, password) => {
     const data = await api.login(username, password);
     setStoredToken(data.token);
-    setUser({
-      username,
-      userLevel: data.userLevel,
-      documentoEntidad: data.documentoEntidad,
-      nombreUsuario: data.nombreUsuario,
-    });
+    try {
+      const me = await api.fetchMe();
+      setUser(me);
+    } catch {
+      setUser({
+        username: data.username || username,
+        userLevel: data.userLevel,
+        documentoEntidad: data.documentoEntidad,
+        nombreUsuario: data.nombreUsuario,
+        primerNombre: '',
+        segundoNombre: '',
+        primerApellido: '',
+        segundoApellido: '',
+        email: '',
+        telefono: '',
+      });
+    }
     return data;
+  }, []);
+
+  const applyUser = useCallback((me) => {
+    setUser(me);
   }, []);
 
   const refreshMe = useCallback(async () => {
@@ -69,9 +89,10 @@ export function AuthProvider({ children }) {
       login,
       logout,
       refreshMe,
+      applyUser,
       isAuthenticated: !!user,
     }),
-    [user, loading, hydrated, login, logout, refreshMe],
+    [user, loading, hydrated, login, logout, refreshMe, applyUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

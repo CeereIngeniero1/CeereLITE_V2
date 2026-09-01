@@ -8,30 +8,134 @@ import {
   Post,
   Query,
   Request,
+  StreamableFile,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { createReadStream } from 'fs';
 import type { Request as ExpressRequest } from 'express';
 import type { JwtPayload } from '../auth/auth.service';
+import type { UploadedFotoFile } from '../entidad-foto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateEvaluacionDto } from './dto/create-evaluacion.dto';
-import { RegistrarRipsDto } from './dto/registrar-rips.dto';
+import { CreateNotaAclaratoriaDto } from './dto/create-nota-aclaratoria.dto';
+import { CreateObservacionDto } from './dto/create-observacion.dto';
 import { UpdateEvaluacionDiagDto } from './dto/update-evaluacion-diag.dto';
+import { UpdateObservacionDto } from './dto/update-observacion.dto';
 import { UpdatePacienteDemografiaDto } from './dto/update-paciente-demografia.dto';
 import { EvolucionService } from './evolucion.service';
+import { FormatosHcService } from './formatos-hc.service';
 
 @Controller('evolucion')
 @UseGuards(JwtAuthGuard)
 export class EvolucionController {
-  constructor(private readonly evolucionService: EvolucionService) {}
+  constructor(
+    private readonly evolucionService: EvolucionService,
+    private readonly formatosHcService: FormatosHcService,
+  ) {}
 
   @Get('tipos-evaluacion')
   tiposEvaluacion() {
     return this.evolucionService.listTiposEvaluacion();
   }
 
+  @Get('paciente/:documento/anexos/siguiente')
+  siguienteAnexo(@Param('documento') documento: string) {
+    return this.evolucionService.nextAnexoNombreBase(documento);
+  }
+
+  @Post('paciente/:documento/anexos')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 25 * 1024 * 1024 } }),
+  )
+  crearAnexo(
+    @Param('documento') documento: string,
+    @UploadedFile() file: UploadedFotoFile,
+    @Request() req: ExpressRequest & { user: JwtPayload },
+  ) {
+    const nombre =
+      typeof req.body?.nombre === 'string' ? req.body.nombre : '';
+    return this.evolucionService.createDocumentoAnexo(
+      req.user,
+      documento,
+      file,
+      nombre,
+    );
+  }
+
+  @Post('paciente/:documento/anexos/:id/archivo')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 25 * 1024 * 1024 } }),
+  )
+  reemplazarAnexo(
+    @Param('documento') documento: string,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: UploadedFotoFile,
+  ) {
+    return this.evolucionService.saveDocumentoAnexoArchivo(
+      documento,
+      id,
+      file,
+    );
+  }
+
+  @Get('paciente/:documento/anexos/:id/archivo')
+  archivoAnexo(
+    @Param('documento') documento: string,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.evolucionService
+      .getDocumentoAnexoArchivo(documento, id)
+      .then(({ fullPath, mime, disposition }) => {
+        return new StreamableFile(createReadStream(fullPath), {
+          type: mime,
+          disposition,
+        });
+      });
+  }
+
+  @Get('paciente/:documento/anexos')
+  listarAnexos(@Param('documento') documento: string) {
+    return this.evolucionService.listDocumentoAnexos(documento);
+  }
+
+  @Get('paciente/:documento/observaciones')
+  listarObservaciones(@Param('documento') documento: string) {
+    return this.evolucionService.listObservaciones(documento);
+  }
+
+  @Post('paciente/:documento/observaciones')
+  crearObservacion(
+    @Param('documento') documento: string,
+    @Request() req: ExpressRequest & { user: JwtPayload },
+    @Body() dto: CreateObservacionDto,
+  ) {
+    return this.evolucionService.createObservacion(req.user, documento, dto);
+  }
+
+  @Patch('paciente/:documento/observaciones/:id')
+  actualizarObservacion(
+    @Param('documento') documento: string,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateObservacionDto,
+  ) {
+    return this.evolucionService.updateObservacion(documento, id, dto);
+  }
+
   @Get('paciente/:documento/evoluciones')
   listarPorPaciente(@Param('documento') documento: string) {
     return this.evolucionService.listEvolucionesMedicas(documento);
+  }
+
+  @Get('paciente/:documento/historial')
+  historialHc(
+    @Param('documento') documento: string,
+    @Query('desde') desde?: string,
+    @Query('hasta') hasta?: string,
+  ) {
+    return this.evolucionService.listHistorialHc(documento, desde, hasta);
   }
 
   @Get('paciente/:documento/hc')
@@ -52,6 +156,17 @@ export class EvolucionController {
     return this.evolucionService.updatePacienteDemografia(documento, dto);
   }
 
+  @Post('paciente/:documento/foto')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
+  actualizarPacienteFoto(
+    @Param('documento') documento: string,
+    @UploadedFile() file: UploadedFotoFile,
+  ) {
+    return this.evolucionService.savePacienteFoto(documento, file);
+  }
+
   @Get('catalog/paciente/:segmento')
   catalogoPaciente(
     @Param('segmento') segmento: string,
@@ -60,68 +175,19 @@ export class EvolucionController {
     return this.evolucionService.catalogoPaciente(segmento, q);
   }
 
-  /* ─── Catálogos RIPS (CeereLite listasRipsRoutes) ─── */
-
-  @Get('catalog/rips/tipo-rips')
-  catalogTipoRips() {
-    return this.evolucionService.catalogoRipsTipoRips();
+  @Get('catalog/parentesco')
+  catalogoParentesco(@Query('q') q?: string) {
+    return this.evolucionService.listParentesco(q);
   }
 
-  @Get('catalog/rips/entidades/:idFuncion')
-  catalogEntidades(
-    @Param('idFuncion', ParseIntPipe) idFuncion: number,
-  ) {
-    return this.evolucionService.catalogoRipsEntidadesPorFuncion(idFuncion);
+  @Get('formatos')
+  listarFormatos() {
+    return this.formatosHcService.list();
   }
 
-  @Get('catalog/rips/modalidad-atencion')
-  catalogModalidad() {
-    return this.evolucionService.catalogoRipsModalidadAtencion();
-  }
-
-  @Get('catalog/rips/grupo-servicios')
-  catalogGrupoServicios() {
-    return this.evolucionService.catalogoRipsGrupoServicios();
-  }
-
-  @Get('catalog/rips/servicios')
-  catalogServicios() {
-    return this.evolucionService.catalogoRipsServicios();
-  }
-
-  @Get('catalog/rips/finalidad-consulta')
-  catalogFinalidadConsulta() {
-    return this.evolucionService.catalogoRipsFinalidadConsulta();
-  }
-
-  @Get('catalog/rips/finalidad-procedimiento')
-  catalogFinalidadProcedimiento() {
-    return this.evolucionService.catalogoRipsFinalidadProcedimiento();
-  }
-
-  @Get('catalog/rips/causa-externa')
-  catalogCausaExterna() {
-    return this.evolucionService.catalogoRipsCausaExterna();
-  }
-
-  @Get('catalog/rips/tipo-diagnostico')
-  catalogTipoDiagnostico() {
-    return this.evolucionService.catalogoRipsTipoDiagnostico();
-  }
-
-  @Get('catalog/rips/via-ingreso')
-  catalogViaIngreso() {
-    return this.evolucionService.catalogoRipsViaIngreso();
-  }
-
-  @Get('catalog/rips/cups/:tipo')
-  catalogCups(@Param('tipo') tipo: string, @Query('q') q?: string) {
-    return this.evolucionService.catalogoRipsCupsPorTipo(tipo, q);
-  }
-
-  @Get('catalog/rips/cie')
-  catalogCie(@Query('q') q?: string) {
-    return this.evolucionService.catalogoRipsCie10(q);
+  @Get('formatos/contenido')
+  contenidoFormato(@Query('file') file: string) {
+    return this.formatosHcService.getContenido(file);
   }
 
   @Post()
@@ -129,21 +195,23 @@ export class EvolucionController {
     @Request() req: ExpressRequest & { user: JwtPayload },
     @Body() dto: CreateEvaluacionDto,
   ) {
-    return this.evolucionService.createEvaluacionSinRips(req.user, dto);
+    return this.evolucionService.createEvaluacion(req.user, dto);
   }
 
-  /** Filas RIPS as ociadas a la evolución (antes de @Get(':id')). */
-  @Get(':id/rips')
-  listarRips(@Param('id', ParseIntPipe) id: number) {
-    return this.evolucionService.listRipsPorEvaluacion(id);
-  }
-
-  @Post(':id/rips')
-  registrarRips(
+  @Get('notas-aclaratorias/:id')
+  notaAclaratoria(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: RegistrarRipsDto,
+    @Query('documento') documento: string,
   ) {
-    return this.evolucionService.registrarRips(id, dto);
+    return this.evolucionService.getNotaAclaratoria(id, documento);
+  }
+
+  @Post('notas-aclaratorias')
+  crearNotaAclaratoria(
+    @Request() req: ExpressRequest & { user: JwtPayload },
+    @Body() dto: CreateNotaAclaratoriaDto,
+  ) {
+    return this.evolucionService.createNotaAclaratoria(req.user, dto);
   }
 
   @Get(':id')

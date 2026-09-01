@@ -1,46 +1,70 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { useTheme } from '../theme/ThemeContext';
+import { BrandLockup } from '../components/BrandLogo';
+import { UserProfileModal } from '../components/UserProfileModal';
 
-const mainLinks = [
+const moduleLinks = [
   { to: '/principal/home', label: 'Inicio', icon: '⌂' },
   { to: '/principal/agenda', label: 'Agenda', icon: '▦' },
-  { to: '/principal/evolucion', label: 'HC / Evolución', icon: '⚕' },
   { to: '/principal/usuarios', label: 'Usuarios', icon: '👥' },
-  { to: '/principal/rips', label: 'RIPS', icon: '📋' },
-  { to: '/principal/configuracion', label: 'Configuración', icon: '⚙' },
+  { to: '/principal/evolucion', label: 'Historias clínicas', icon: '⚕' },
 ];
+
+function shortLoggedName(user) {
+  const first = String(user?.primerNombre ?? '').trim();
+  const last = String(user?.primerApellido ?? '').trim();
+  if (first && last) return `${first} ${last}`;
+  if (first) return first;
+
+  const full = String(user?.nombreUsuario ?? '').trim();
+  if (full) {
+    const parts = full.split(/\s+/).filter(Boolean);
+    if (parts.length >= 4) return `${parts[0]} ${parts[2]}`;
+    if (parts.length >= 2) return `${parts[0]} ${parts[1]}`;
+    return parts[0];
+  }
+  return String(user?.username ?? '').trim();
+}
 
 export function Sidebar() {
   const [open, setOpen] = useState(true);
   const [facturaOpen, setFacturaOpen] = useState(false);
-  const { logout } = useAuth();
+  const [profileOpen, setProfileOpen] = useState(false);
+  const { user, logout } = useAuth();
+  const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
-  function handleLogout() {
-    logout();
-    navigate('/login', { replace: true });
+  function toggleSidebar() {
+    setOpen((v) => {
+      const next = !v;
+      if (!next) {
+        setFacturaOpen(false);
+      }
+      return next;
+    });
   }
 
-  return (
-    <aside className={`sidebar ${open ? 'sidebar-open' : 'sidebar-collapsed'}`}>
-      <button
-        type="button"
-        className="sidebar-toggle"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        title={open ? 'Contraer' : 'Expandir'}
-      >
-        {open ? '◂' : '▸'}
-      </button>
+  const displayName = shortLoggedName(user);
 
+  return (
+    <>
+    <aside className={`sidebar ${open ? 'sidebar-open' : 'sidebar-collapsed'}`}>
       <div className="sidebar-brand">
-        <span className="sidebar-brand-mark">C</span>
-        {open && <span className="sidebar-brand-text">CeereSio Lite</span>}
+        <BrandLockup
+          white
+          mark={!open}
+          size="sm"
+          subtitle={open ? 'CEERESIO LITE' : undefined}
+          meta={open ? displayName || undefined : undefined}
+          onMetaClick={open ? () => setProfileOpen(true) : undefined}
+        />
       </div>
 
       <nav className="sidebar-nav">
-        {mainLinks.map(({ to, label, icon }) => (
+        {open && <p className="sidebar-section-label">Módulos</p>}
+        {moduleLinks.map(({ to, label, icon }) => (
           <NavLink
             key={to}
             to={to}
@@ -48,6 +72,7 @@ export function Sidebar() {
               `sidebar-link ${isActive ? 'active' : ''}`
             }
             end={to === '/principal/home'}
+            title={label}
           >
             <span className="sidebar-link-icon" aria-hidden>
               {icon}
@@ -95,11 +120,64 @@ export function Sidebar() {
             </div>
           )}
         </div>
+
+        {open && <p className="sidebar-section-label">Herramientas</p>}
+        <NavLink
+          to="/principal/configuracion"
+          className={({ isActive }) =>
+            `sidebar-link ${isActive ? 'active' : ''}`
+          }
+          title="Configuración"
+        >
+          <span className="sidebar-link-icon" aria-hidden>
+            ⚙
+          </span>
+          {open && <span>Configuración</span>}
+        </NavLink>
       </nav>
 
-      <button type="button" className="sidebar-logout" onClick={handleLogout}>
-        {open ? 'Cerrar sesión' : '⎆'}
-      </button>
+      <div className="sidebar-footer">
+        <button
+          type="button"
+          className="sidebar-link"
+          onClick={toggleSidebar}
+          title={open ? 'Comprimir menú' : 'Expandir menú'}
+        >
+          <span className="sidebar-link-icon" aria-hidden>
+            {open ? '‹' : '›'}
+          </span>
+          {open && <span>Comprimir menú</span>}
+        </button>
+        <button
+          type="button"
+          className="sidebar-link"
+          onClick={toggleTheme}
+          title={isDark ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}
+        >
+          <span className="sidebar-link-icon" aria-hidden>
+            {isDark ? '☀' : '☾'}
+          </span>
+          {open && <span>{isDark ? 'Tema claro' : 'Tema oscuro'}</span>}
+        </button>
+        <button
+          type="button"
+          className="sidebar-logout"
+          onClick={() => {
+            logout();
+            navigate('/login', { replace: true });
+          }}
+          title="Cerrar sesión"
+        >
+          <span className="sidebar-link-icon" aria-hidden>
+            ⏻
+          </span>
+          {open && <span>Cerrar sesión</span>}
+        </button>
+      </div>
     </aside>
+    {profileOpen ? (
+      <UserProfileModal onClose={() => setProfileOpen(false)} />
+    ) : null}
+    </>
   );
 }

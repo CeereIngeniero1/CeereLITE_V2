@@ -18,6 +18,7 @@ async function bootstrap() {
   app.enableCors({
     origin: config.get<string>('CORS_ORIGIN') ?? true,
     credentials: true,
+    exposedHeaders: ['Content-Disposition'],
   });
 
   app.setGlobalPrefix('api/v1', {
