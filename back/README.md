@@ -28,7 +28,8 @@ Al agregar una consulta: primero el `CREATE OR ALTER VIEW` en ese archivo, despu
 - `GET /api/v1/agenda/profesionales` — catálogo función 17 (`dbo.[Lite Cnsta AgendaProfesional]`).
 - `GET /api/v1/agenda/tipos-compromiso` — tipos y color OLE (`dbo.[Lite Cnsta AgendaTipoCompromiso]`).
 - `GET /api/v1/agenda/procedimientos?q=` — TOP 40 de `dbo.Objeto` vía `dbo.[Lite Cnsta AgendaProcedimientos]`.
-- `POST /api/v1/agenda/citas` — alta en `CompromisoVI` y líneas en `CompromisoVII`. `horaFin` = suma de tiempos (si la suma es 0, 30 min). 409 si el horario se cruza (no cuentan estados 60, 61, 64, 71). `idTipoCompromiso` y cada `codigosObjeto` deben existir en catálogo.
+- `POST /api/v1/agenda/citas` — alta en `CompromisoVI` y líneas en `CompromisoVII`. `horaInicio` y `horaFin` las envía el cliente (no hay default de 30 min). Si falta un fin válido y la suma de tiempos de procedimientos es > 0, se usa esa suma. 409 si el horario se cruza (no cuentan estados 60, 61, 64, 71). `idTipoCompromiso` y cada `codigosObjeto` deben existir en catálogo.
+- `PATCH /api/v1/agenda/citas/:id` — misma regla de horas; el choque no cuenta esta cita. Reemplaza las filas de `CompromisoVII`.
 
 SELECT del día:
 
@@ -56,6 +57,7 @@ WHERE LTRIM(RTRIM([Entidad Responsable])) = LTRIM(RTRIM(@profesional))
   AND CONVERT(time, [Hora Inicio CompromisoVI]) < CONVERT(time, @horaFin)
   AND CONVERT(time, ISNULL([Hora Fin CompromisoVI], [Hora Inicio CompromisoVI]))
       > CONVERT(time, @horaInicio)
+  AND (@idCita IS NULL OR [Id CompromisoVI] <> @idCita)
 ```
 
 Catálogo de tipos (`GET /agenda/tipos-compromiso`):

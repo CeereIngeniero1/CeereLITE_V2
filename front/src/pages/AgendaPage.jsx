@@ -10,15 +10,27 @@ import {
   fetchPacienteDatos,
   fetchUsers,
   messageFromAxiosError,
+  updateAgendaCita,
 } from '../api/client';
 import { PatientEditModal } from '../components/PatientEditModal';
 
 const ESTADOS_CANCELADOS = new Set([60, 61, 64, 71]);
-const SLOT_INICIO = 7 * 60;
+const SLOT_INICIO = 6 * 60;
 const SLOT_PASO = 5;
-const GRID_FIN = 18 * 60 + 30;
+const GRID_FIN = 22 * 60;
 const GRID_MINUTOS = GRID_FIN - SLOT_INICIO;
-const DURACION_DEFAULT_MIN = 30;
+const SLOT_PX = 20;
+const GRID_HEIGHT = (GRID_MINUTOS / SLOT_PASO) * SLOT_PX;
+const AVATAR_PALETTE = [
+  '#1a73e8',
+  '#188038',
+  '#9334e6',
+  '#e37400',
+  '#484a7d',
+  '#cf3722',
+  '#0d9488',
+  '#c026d3',
+];
 
 function ymdLocal(d) {
   const pad = (n) => String(n).padStart(2, '0');
@@ -66,12 +78,11 @@ function addMinutesHm(hm, add) {
   return minutesToHm(Math.min(start + add, 23 * 60 + 59));
 }
 
-function duracionMinutos(procedimientos) {
-  const sum = (procedimientos ?? []).reduce(
+function sumaTiempos(procedimientos) {
+  return (procedimientos ?? []).reduce(
     (acc, p) => acc + (Number(p.tiempoMinutos) || 0),
     0,
   );
-  return sum > 0 ? sum : DURACION_DEFAULT_MIN;
 }
 
 function formatFechaCorta(iso) {
@@ -81,20 +92,51 @@ function formatFechaCorta(iso) {
   return `${d}/${m}/${y}`;
 }
 
-function buildSlots() {
-  const slots = [];
-  for (let m = SLOT_INICIO; m < GRID_FIN; m += SLOT_PASO) {
-    slots.push(minutesToHm(m));
+function buildHourLabels() {
+  const labels = [];
+  const startHour = Math.ceil(SLOT_INICIO / 60);
+  for (let h = startHour; h * 60 <= GRID_FIN; h += 1) {
+    const min = h * 60;
+    labels.push({
+      hm: minutesToHm(min),
+      top: ((min - SLOT_INICIO) / SLOT_PASO) * SLOT_PX,
+    });
   }
-  return slots;
+  return labels;
 }
 
-function slotMinutesOfHour(slot) {
-  const total = hmToMinutes(slot);
-  return total == null ? 0 : total % 60;
+function buildGridMarks() {
+  const marks = [];
+  for (let m = SLOT_INICIO; m <= GRID_FIN; m += 15) {
+    marks.push({
+      top: ((m - SLOT_INICIO) / SLOT_PASO) * SLOT_PX,
+      hour: m % 60 === 0,
+    });
+  }
+  return marks;
 }
 
-const SLOTS = buildSlots();
+const HOUR_LABELS = buildHourLabels();
+const GRID_MARKS = buildGridMarks();
+
+function inicialesNombre(nombre) {
+  return String(nombre ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+}
+
+function avatarColor(key) {
+  const s = String(key ?? '');
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    h = (h * 31 + s.charCodeAt(i)) | 0;
+  }
+  return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length];
+}
 
 function isCancelada(cita) {
   return ESTADOS_CANCELADOS.has(Number(cita?.idEstado));
@@ -122,25 +164,60 @@ function oleToCss(n) {
   return `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
 }
 
-function textOnOle(n) {
+function oleSoftCss(n) {
   const rgb = oleToRgb(n);
-  if (!rgb) return '#111';
-  const y = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
-  return y > 0.55 ? '#111' : '#fff';
+  if (!rgb) return null;
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)`;
 }
 
-function blockGeometry(cita) {
+function citaRango(cita) {
   const start = hmToMinutes(cita.hora);
   if (start == null) return null;
   let end = hmToMinutes(cita.horaFin);
   if (end == null || end <= start) end = start + SLOT_PASO;
-  const a = Math.max(start, SLOT_INICIO);
-  const b = Math.min(end, GRID_FIN);
+  return { start, end };
+}
+
+function blockGeometryPx(cita) {
+  const r = citaRango(cita);
+  if (!r) return null;
+  const a = Math.max(r.start, SLOT_INICIO);
+  const b = Math.min(r.end, GRID_FIN);
   if (b <= a) return null;
   return {
-    topPct: ((a - SLOT_INICIO) / GRID_MINUTOS) * 100,
-    heightPct: ((b - a) / GRID_MINUTOS) * 100,
+    top: ((a - SLOT_INICIO) / SLOT_PASO) * SLOT_PX,
+    height: ((b - a) / SLOT_PASO) * SLOT_PX,
   };
+}
+
+function calcularSolapamientos(citasProfesional) {
+  const grupos = [];
+  const sorted = [...citasProfesional].sort((a, b) => {
+    const ra = citaRango(a);
+    const rb = citaRango(b);
+    return (ra?.start ?? 0) - (rb?.start ?? 0);
+  });
+  for (const cita of sorted) {
+    const r = citaRango(cita);
+    if (!r) continue;
+    let grupo = null;
+    for (const g of grupos) {
+      const ultima = citaRango(g[g.length - 1]);
+      if (ultima && r.start < ultima.end) {
+        grupo = g;
+        break;
+      }
+    }
+    if (grupo) grupo.push(cita);
+    else grupos.push([cita]);
+  }
+  return grupos;
+}
+
+function layoutCitas(citasProfesional) {
+  return calcularSolapamientos(citasProfesional).flatMap((grupo) =>
+    grupo.map((cita, index) => ({ cita, index, total: grupo.length })),
+  );
 }
 
 function FichaCampo({ label, value }) {
@@ -152,7 +229,7 @@ function FichaCampo({ label, value }) {
   );
 }
 
-function TablaProcedimientos({ rows, onQuitar }) {
+function TablaProcedimientos({ rows, onQuitar, onTiempoChange }) {
   return (
     <div className="agenda-proc-table-wrap">
       <table className="agenda-proc-table">
@@ -170,7 +247,25 @@ function TablaProcedimientos({ rows, onQuitar }) {
             rows.map((p) => (
               <tr key={p.codigo}>
                 <td className="td-mono">{p.codigo}</td>
-                <td>{p.tiempoMinutos ?? 0}</td>
+                <td>
+                  {onTiempoChange ? (
+                    <input
+                      className="hc-input agenda-proc-tiempo"
+                      type="number"
+                      min={0}
+                      step={5}
+                      value={p.tiempoMinutos ?? 0}
+                      onChange={(e) =>
+                        onTiempoChange(
+                          p.codigo,
+                          Math.max(0, Number(e.target.value) || 0),
+                        )
+                      }
+                    />
+                  ) : (
+                    p.tiempoMinutos ?? 0
+                  )}
+                </td>
                 <td>{p.unidad || '—'}</td>
                 <td>{p.descripcion || '—'}</td>
                 {onQuitar ? (
@@ -281,27 +376,49 @@ function NuevaCitaModal({
   documentoEmpresa,
   nombreSede,
   tipos,
+  citaInicial,
   onClose,
   onCreated,
 }) {
+  const esEdicion = Boolean(citaInicial?.idCita);
+  const [fechaCita, setFechaCita] = useState(
+    () => citaInicial?.fecha || fecha,
+  );
+  const [horaCita, setHoraCita] = useState(
+    () => (citaInicial?.hora || horaInicio || '').slice(0, 5),
+  );
+  const [horaFin, setHoraFin] = useState(
+    () => (citaInicial?.horaFin || '').slice(0, 5),
+  );
   const [pacientes, setPacientes] = useState([]);
   const [busqueda, setBusqueda] = useState('');
-  const [documentoPaciente, setDocumentoPaciente] = useState('');
+  const [documentoPaciente, setDocumentoPaciente] = useState(
+    () => citaInicial?.documentoPaciente || '',
+  );
   const [datosPaciente, setDatosPaciente] = useState(null);
   const [loadingFicha, setLoadingFicha] = useState(false);
   const [qProc, setQProc] = useState('');
   const [catalogoProc, setCatalogoProc] = useState([]);
-  const [seleccionados, setSeleccionados] = useState([]);
-  const [motivo, setMotivo] = useState('');
+  const [seleccionados, setSeleccionados] = useState(() =>
+    Array.isArray(citaInicial?.procedimientos)
+      ? citaInicial.procedimientos
+      : [],
+  );
+  const [motivo, setMotivo] = useState(() => citaInicial?.motivo || '');
   const defaultTipo = tipos.some((t) => t.idTipoCompromiso === 2)
     ? 2
     : (tipos[0]?.idTipoCompromiso ?? 2);
-  const [idTipo, setIdTipo] = useState(defaultTipo);
+  const [idTipo, setIdTipo] = useState(
+    () => citaInicial?.idTipoCompromiso || defaultTipo,
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [editPaciente, setEditPaciente] = useState(false);
 
-  const horaFin = addMinutesHm(horaInicio, duracionMinutos(seleccionados));
+  function aplicarSumaSiHay(rows, inicioHm = horaCita) {
+    const sum = sumaTiempos(rows);
+    if (sum > 0) setHoraFin(addMinutesHm(inicioHm, sum));
+  }
 
   useEffect(() => {
     let cancel = false;
@@ -387,7 +504,27 @@ function NuevaCitaModal({
     if (!codigo) return;
     setSeleccionados((prev) => {
       if (prev.some((x) => x.codigo === codigo)) return prev;
-      return [...prev, p];
+      const next = [...prev, p];
+      aplicarSumaSiHay(next);
+      return next;
+    });
+  }
+
+  function quitarProc(codigo) {
+    setSeleccionados((prev) => {
+      const next = prev.filter((x) => x.codigo !== codigo);
+      aplicarSumaSiHay(next);
+      return next;
+    });
+  }
+
+  function cambiarTiempoProc(codigo, minutos) {
+    setSeleccionados((prev) => {
+      const next = prev.map((x) =>
+        x.codigo === codigo ? { ...x, tiempoMinutos: minutos } : x,
+      );
+      aplicarSumaSiHay(next);
+      return next;
     });
   }
 
@@ -403,23 +540,46 @@ function NuevaCitaModal({
       setError('Indique el motivo o seleccione un procedimiento.');
       return;
     }
+    const horaInicio =
+      horaCita.length === 5 ? horaCita : horaCita.slice(0, 5);
+    const horaFinEnvio = (horaFin || '').slice(0, 5);
+    const iniMin = hmToMinutes(horaInicio);
+    const finMin = hmToMinutes(horaFinEnvio);
+    if (iniMin == null) {
+      setError('Indique la hora de inicio.');
+      return;
+    }
+    if (finMin == null || finMin <= iniMin) {
+      setError('La hora de fin debe ser posterior a la de inicio.');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
-      await createAgendaCita({
+      const payload = {
         documentoPaciente,
         documentoProfesional: profesional.documento,
-        fecha,
+        fecha: fechaCita,
         horaInicio,
-        horaFin,
+        horaFin: horaFinEnvio,
         motivo: motivoFinal,
         idTipoCompromiso: Number(idTipo),
         codigosObjeto: seleccionados.map((p) => p.codigo),
         documentoEmpresa: documentoEmpresa || undefined,
-      });
-      onCreated();
+      };
+      if (esEdicion) {
+        await updateAgendaCita(citaInicial.idCita, payload);
+      } else {
+        await createAgendaCita(payload);
+      }
+      onCreated(fechaCita);
     } catch (e) {
-      setError(await messageFromAxiosError(e, 'No se pudo crear la cita'));
+      setError(
+        await messageFromAxiosError(
+          e,
+          esEdicion ? 'No se pudo guardar la cita' : 'No se pudo crear la cita',
+        ),
+      );
     } finally {
       setSaving(false);
     }
@@ -437,9 +597,12 @@ function NuevaCitaModal({
         <header className="modal-header">
           <div>
             <p className="page-eyebrow">Agenda</p>
-            <h2 id="agenda-cita-title">Nueva cita</h2>
+            <h2 id="agenda-cita-title">
+              {esEdicion ? 'Editar cita' : 'Nueva cita'}
+            </h2>
             <p className="muted" style={{ margin: '0.25rem 0 0' }}>
-              {profesional.nombre} · {fecha} · {horaInicio}–{horaFin}
+              {profesional.nombre}
+              {` · ${fechaCita} · ${horaCita}–${horaFin}`}
             </p>
           </div>
           <button type="button" className="btn-outline" onClick={onClose}>
@@ -448,6 +611,47 @@ function NuevaCitaModal({
         </header>
         <div className="modal-body">
           {error && <div className="alert alert-error">{error}</div>}
+
+          <div className="agenda-cuando-row">
+            <label className="hc-field">
+              <span className="hc-field-label">Fecha</span>
+              <input
+                className="hc-input"
+                type="date"
+                value={fechaCita}
+                onChange={(e) => {
+                  if (e.target.value) setFechaCita(e.target.value);
+                }}
+              />
+            </label>
+            <label className="hc-field">
+              <span className="hc-field-label">Hora inicio</span>
+              <input
+                className="hc-input"
+                type="time"
+                step={300}
+                value={horaCita}
+                onChange={(e) => {
+                  const v = e.target.value.slice(0, 5);
+                  if (!v) return;
+                  setHoraCita(v);
+                  aplicarSumaSiHay(seleccionados, v);
+                }}
+              />
+            </label>
+            <label className="hc-field">
+              <span className="hc-field-label">Hora fin</span>
+              <input
+                className="hc-input"
+                type="time"
+                step={300}
+                value={horaFin}
+                onChange={(e) => {
+                  if (e.target.value) setHoraFin(e.target.value.slice(0, 5));
+                }}
+              />
+            </label>
+          </div>
 
           <h3 className="agenda-section-title">Procedimientos</h3>
           <label className="hc-field">
@@ -481,9 +685,8 @@ function NuevaCitaModal({
           </div>
           <TablaProcedimientos
             rows={seleccionados}
-            onQuitar={(codigo) =>
-              setSeleccionados((prev) => prev.filter((x) => x.codigo !== codigo))
-            }
+            onQuitar={quitarProc}
+            onTiempoChange={cambiarTiempoProc}
           />
 
           <h3 className="agenda-section-title">Paciente</h3>
@@ -574,7 +777,7 @@ function NuevaCitaModal({
               Cancelar
             </button>
             <button type="button" onClick={() => void guardar()} disabled={saving}>
-              {saving ? 'Guardando…' : 'Agendar'}
+              {saving ? 'Guardando…' : esEdicion ? 'Guardar' : 'Agendar'}
             </button>
           </div>
         </div>
@@ -606,6 +809,7 @@ function CitaResumenPopover({
   onClose,
   onKeep,
   onEvolucionar,
+  onEditarCita,
   onEditarPaciente,
 }) {
   const ref = useRef(null);
@@ -642,6 +846,13 @@ function CitaResumenPopover({
         <button
           type="button"
           className="btn-sm"
+          onClick={() => onEditarCita(cita)}
+        >
+          Editar cita
+        </button>
+        <button
+          type="button"
+          className="btn-sm"
           disabled={!String(cita.documentoPaciente ?? '').trim()}
           onClick={() => onEditarPaciente(cita)}
         >
@@ -670,11 +881,16 @@ export default function AgendaPage() {
   const [docEmpresa, setDocEmpresa] = useState('');
   const [nombreSede, setNombreSede] = useState('');
   const [loading, setLoading] = useState(true);
+  const [catalogReady, setCatalogReady] = useState(false);
   const [error, setError] = useState('');
   const [modal, setModal] = useState(null);
   const [resumen, setResumen] = useState(null);
   const [editPaciente, setEditPaciente] = useState(null);
   const hideResumenTimer = useRef(null);
+  const [nowMin, setNowMin] = useState(() => {
+    const n = new Date();
+    return n.getHours() * 60 + n.getMinutes();
+  });
 
   const esHoy = fecha === ymdLocal(new Date());
 
@@ -710,6 +926,8 @@ export default function AgendaPage() {
         setNombreSede(first?.nombreComercialEmpresa ?? '');
       } catch {
         /* catálogos opcionales */
+      } finally {
+        if (!cancelled) setCatalogReady(true);
       }
     })();
     return () => {
@@ -722,29 +940,58 @@ export default function AgendaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- recargar al cambiar fecha
   }, [fecha]);
 
+  useEffect(() => {
+    if (!esHoy) return undefined;
+    const tick = () => {
+      const n = new Date();
+      setNowMin(n.getHours() * 60 + n.getMinutes());
+    };
+    tick();
+    const id = setInterval(tick, 30000);
+    return () => clearInterval(id);
+  }, [esHoy]);
+
   const columnas = useMemo(() => {
-    if (filtroProf) {
-      const p = profesionales.find(
-        (x) => x.documentoProfesional === filtroProf,
-      );
-      return [
-        {
-          documento: filtroProf,
-          nombre: p?.nombreProfesional || filtroProf,
-        },
-      ];
-    }
-    const map = new Map();
-    for (const c of citas) {
-      const doc = String(c.documentoProfesional ?? '').trim();
-      if (!doc || map.has(doc)) continue;
-      map.set(doc, {
-        documento: doc,
-        nombre: c.nombreProfesional || doc,
-      });
-    }
-    return [...map.values()];
-  }, [filtroProf, profesionales, citas]);
+    const list = profesionales
+      .map((p) => ({
+        documento: String(p.documentoProfesional ?? '').trim(),
+        nombre: p.nombreProfesional || p.documentoProfesional,
+      }))
+      .filter((p) => p.documento);
+    if (filtroProf) return list.filter((c) => c.documento === filtroProf);
+    return list;
+  }, [profesionales, filtroProf]);
+
+  const nowTop =
+    esHoy && nowMin >= SLOT_INICIO && nowMin <= GRID_FIN
+      ? ((nowMin - SLOT_INICIO) / SLOT_PASO) * SLOT_PX
+      : null;
+
+  function abrirNuevaCita(col, clientY, columnEl) {
+    const rect = columnEl.getBoundingClientRect();
+    const y = clientY - rect.top;
+    const slotsFromTop = Math.floor(y / SLOT_PX);
+    const minutes = SLOT_INICIO + slotsFromTop * SLOT_PASO;
+    if (minutes < SLOT_INICIO || minutes >= GRID_FIN) return;
+    setModal({
+      horaInicio: minutesToHm(minutes),
+      profesional: {
+        documento: col.documento,
+        nombre: col.nombre,
+      },
+    });
+  }
+
+  function modalDesdeCita(cita) {
+    return {
+      cita: { ...cita, fecha },
+      profesional: {
+        documento: cita.documentoProfesional,
+        nombre: cita.nombreProfesional || cita.documentoProfesional,
+      },
+      horaInicio: cita.hora,
+    };
+  }
 
   function goEvolucion(documentoPaciente) {
     const doc = String(documentoPaciente ?? '').trim();
@@ -775,52 +1022,52 @@ export default function AgendaPage() {
 
   return (
     <div className="page agenda-page">
-      <header className="usuarios-header">
-        <div>
-          <p className="page-eyebrow">Consultorio</p>
-          <h1>Agenda</h1>
-          <p className="muted">{formatDiaLargo(fecha)}</p>
+      <header className="agenda-topbar">
+        <div className="agenda-topbar-left">
+          <div className="agenda-brand">Agenda</div>
+          <button
+            type="button"
+            className="agenda-today-btn"
+            disabled={esHoy}
+            onClick={() => setFecha(ymdLocal(new Date()))}
+          >
+            Hoy
+          </button>
+          <div className="agenda-nav">
+            <button
+              type="button"
+              className="agenda-nav-btn"
+              aria-label="Día anterior"
+              onClick={() => setFecha((f) => addDays(f, -1))}
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              className="agenda-nav-btn"
+              aria-label="Día siguiente"
+              onClick={() => setFecha((f) => addDays(f, 1))}
+            >
+              ›
+            </button>
+          </div>
+          <div className="agenda-date-title">{formatDiaLargo(fecha)}</div>
         </div>
-      </header>
-
-      <div className="agenda-toolbar">
-        <button
-          type="button"
-          className="btn-outline"
-          onClick={() => setFecha((f) => addDays(f, -1))}
-        >
-          Anterior
-        </button>
-        <label className="agenda-date-label">
-          Fecha
+        <div className="agenda-topbar-right">
           <input
+            className="agenda-date-input"
             type="date"
             value={fecha}
             onChange={(e) => {
               if (e.target.value) setFecha(e.target.value);
             }}
+            aria-label="Fecha"
           />
-        </label>
-        <button
-          type="button"
-          className="btn-outline"
-          onClick={() => setFecha((f) => addDays(f, 1))}
-        >
-          Siguiente
-        </button>
-        <button
-          type="button"
-          className="btn-outline"
-          disabled={esHoy}
-          onClick={() => setFecha(ymdLocal(new Date()))}
-        >
-          Hoy
-        </button>
-        <label className="agenda-date-label">
-          Profesional
           <select
+            className="agenda-view-select"
             value={filtroProf}
             onChange={(e) => setFiltroProf(e.target.value)}
+            aria-label="Profesional"
           >
             <option value="">Todos</option>
             {profesionales.map((p) => (
@@ -832,129 +1079,142 @@ export default function AgendaPage() {
               </option>
             ))}
           </select>
-        </label>
-      </div>
+        </div>
+      </header>
 
       {error && <div className="alert alert-error">{error}</div>}
 
-      {loading ? (
-        <p className="muted">Cargando citas…</p>
+      {loading || !catalogReady ? (
+        <p className="muted agenda-loading">Cargando citas…</p>
       ) : columnas.length === 0 ? (
-        <p className="muted">
-          No hay citas en este día. Elija un profesional para agendar.
+        <p className="muted agenda-loading">
+          No hay profesionales en el catálogo.
         </p>
       ) : (
-        <div className="agenda-grid-wrap">
-          <div className="agenda-day">
-            <div className="agenda-times">
-              <div className="agenda-col-head">Hora</div>
-              <div
-                className="agenda-col-body"
-                style={{
-                  height: `calc(var(--agenda-slot-h) * ${SLOTS.length})`,
-                }}
-              >
-                {SLOTS.map((slot) => {
-                  const min = slotMinutesOfHour(slot);
-                  const isHour = min === 0;
-                  const isQuarter = min % 15 === 0;
-                  return (
+        <div className="agenda-cal-wrap">
+          <div className="agenda-cal-scroll">
+            <div className="agenda-cal-header">
+              <div className="agenda-header-time" />
+              {columnas.map((col) => (
+                <div key={col.documento} className="agenda-pro-head">
+                  <div className="agenda-pro-inner">
                     <div
-                      key={slot}
-                      className={
-                        isHour
-                          ? 'agenda-time-label agenda-time-label--hour'
-                          : isQuarter
-                            ? 'agenda-time-label agenda-time-label--quarter'
-                            : 'agenda-time-label'
-                      }
+                      className="agenda-pro-avatar"
+                      style={{ background: avatarColor(col.documento) }}
                     >
-                      {isQuarter ? slot : ''}
+                      {inicialesNombre(col.nombre) || '·'}
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-            {columnas.map((col) => {
-              const delDia = citasDeProfesional(citas, col.documento).filter(
-                (c) => !isCancelada(c),
-              );
-              return (
-                <div key={col.documento} className="agenda-col">
-                  <div className="agenda-col-head">
-                    {col.nombre}
-                    <div className="muted agenda-profesional-doc">
-                      {col.documento}
-                    </div>
+                    <div className="agenda-pro-name">{col.nombre}</div>
+                    <div className="agenda-pro-doc">{col.documento}</div>
                   </div>
+                </div>
+              ))}
+            </div>
+            <div className="agenda-cal-body">
+              <div className="agenda-time-col" style={{ height: GRID_HEIGHT }}>
+                <div
+                  className="agenda-time-area"
+                  style={{ height: GRID_HEIGHT }}
+                >
+                  {HOUR_LABELS.map((h, i) => (
+                    <div
+                      key={h.hm}
+                      className={
+                        i === 0
+                          ? 'agenda-hour-label agenda-hour-label--first'
+                          : 'agenda-hour-label'
+                      }
+                      style={{ top: h.top }}
+                    >
+                      {h.hm}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {columnas.map((col) => {
+                const delDia = citasDeProfesional(citas, col.documento).filter(
+                  (c) => !isCancelada(c),
+                );
+                const laid = layoutCitas(delDia);
+                return (
                   <div
-                    className="agenda-col-body"
-                    style={{
-                      height: `calc(var(--agenda-slot-h) * ${SLOTS.length})`,
+                    key={col.documento}
+                    className="agenda-pro-col"
+                    style={{ height: GRID_HEIGHT }}
+                    onClick={(e) => {
+                      if (e.target !== e.currentTarget) return;
+                      abrirNuevaCita(col, e.clientY, e.currentTarget);
                     }}
                   >
-                    {SLOTS.map((slot) => {
-                      const min = slotMinutesOfHour(slot);
-                      const slotClass = [
-                        'agenda-slot',
-                        'agenda-slot--empty',
-                        min === 0 ? 'agenda-slot--hour' : '',
-                        min % 15 === 0 ? 'agenda-slot--quarter' : '',
-                      ]
-                        .filter(Boolean)
-                        .join(' ');
-                      return (
-                        <button
-                          key={slot}
-                          type="button"
-                          className={slotClass}
-                          title={`Agendar ${slot}`}
-                          aria-label={`Agendar ${slot}`}
-                          onClick={() =>
-                            setModal({
-                              horaInicio: slot,
-                              profesional: col,
-                            })
-                          }
-                        >
-                          Agendar
-                        </button>
-                      );
-                    })}
-                    {delDia.map((cita) => {
-                      const geo = blockGeometry(cita);
+                    {GRID_MARKS.map((m) => (
+                      <div
+                        key={m.top}
+                        className={
+                          m.hour
+                            ? 'agenda-grid-line agenda-grid-line--hour'
+                            : 'agenda-grid-line agenda-grid-line--quarter'
+                        }
+                        style={{ top: m.top }}
+                      />
+                    ))}
+                    {nowTop != null ? (
+                      <div className="agenda-now-line" style={{ top: nowTop }} />
+                    ) : null}
+                    {laid.map(({ cita, index, total }) => {
+                      const geo = blockGeometryPx(cita);
                       if (!geo) return null;
-                      const bg = oleToCss(cita.colorTipo);
-                      const fg = textOnOle(cita.colorTipo);
+                      const color = oleToCss(cita.colorTipo) || 'var(--brand)';
+                      const gap = 4;
                       return (
                         <div
                           key={cita.idCita}
                           className="agenda-cita-block"
+                          role="button"
+                          tabIndex={0}
                           style={{
-                            top: `${geo.topPct}%`,
-                            height: `${geo.heightPct}%`,
+                            top: geo.top,
+                            height: Math.max(geo.height, 16),
+                            width: `calc(${100 / total}% - ${gap}px)`,
+                            left: `calc(${index * (100 / total)}% + ${gap / 2}px)`,
                             background:
-                              bg ||
-                              'color-mix(in srgb, var(--brand) 18%, var(--surface-card))',
-                            color: fg,
+                              oleSoftCss(cita.colorTipo) || 'var(--brand-soft)',
+                            borderLeftColor: color,
+                            color,
                           }}
                           onMouseEnter={(e) =>
                             showResumen(cita, e.currentTarget)
                           }
                           onMouseLeave={scheduleHideResumen}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setResumen(null);
+                            setModal(modalDesdeCita(cita));
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setModal(modalDesdeCita(cita));
+                            }
+                          }}
                         >
-                          <strong>{cita.nombrePaciente || 'Paciente'}</strong>
-                          <span>
+                          <div className="agenda-cita-time">
                             {cita.hora}
-                            {cita.horaFin ? `–${cita.horaFin}` : ''}
-                          </span>
+                            {cita.horaFin ? ` – ${cita.horaFin}` : ''}
+                          </div>
+                          <div className="agenda-cita-patient">
+                            {cita.nombrePaciente || 'Paciente'}
+                          </div>
+                          <div className="agenda-cita-type">
+                            {cita.tipoCompromiso || cita.motivo || ''}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
@@ -974,6 +1234,10 @@ export default function AgendaPage() {
             setResumen(null);
             goEvolucion(doc);
           }}
+          onEditarCita={(cita) => {
+            setResumen(null);
+            setModal(modalDesdeCita(cita));
+          }}
           onEditarPaciente={(cita) => {
             setResumen(null);
             setEditPaciente({
@@ -987,15 +1251,20 @@ export default function AgendaPage() {
       {modal ? (
         <NuevaCitaModal
           fecha={fecha}
-          horaInicio={modal.horaInicio}
+          horaInicio={modal.horaInicio || modal.cita?.hora || '06:00'}
           profesional={modal.profesional}
           documentoEmpresa={docEmpresa}
           nombreSede={nombreSede}
           tipos={tipos}
+          citaInicial={modal.cita || null}
           onClose={() => setModal(null)}
-          onCreated={() => {
+          onCreated={(ymd) => {
             setModal(null);
-            void loadCitas({ silent: true });
+            if (ymd && ymd !== fecha) {
+              setFecha(ymd);
+            } else {
+              void loadCitas({ silent: true });
+            }
           }}
         />
       ) : null}

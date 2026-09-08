@@ -22,11 +22,9 @@ export const envValidationSchema = Joi.object({
   STATIC_IMAGES_PATH: Joi.string().default(
     path.join(__dirname, '../../assets/static-images'),
   ),
-<<<<<<< HEAD
   FORMATOS_HC_PATH: Joi.string().default('C:/CeereSio/Formatos HC'),
   FIRMA_ENTIDAD_PATH: Joi.string().default('C:/CeereSio/Firma Entidad'),
   DOCUMENTOS_PATH: Joi.string().default('C:/CeereSio/Documentos'),
-=======
 
   // IHCE / RDACE: opcionales hasta portar persistencia RDA
   IHCE_SANDBOX_BASE_URL: Joi.string().allow('').optional(),
@@ -49,5 +47,4 @@ export const envValidationSchema = Joi.object({
   IHCE_PROD_CUSTODIAN_NAME: Joi.string().allow('').optional(),
   IHCE_RDACE_DEFAULT_NIT_IPS: Joi.string().allow('').optional(),
   IHCE_RDACE_DEFAULT_NOMBRE_IPS: Joi.string().allow('').optional(),
->>>>>>> 2617d855dca6e0e5090545aa21bf35e02b26b203
 });

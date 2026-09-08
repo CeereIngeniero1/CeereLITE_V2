@@ -369,3 +369,9 @@ export async function createAgendaCita(body) {
   const { data } = await api.post('/agenda/citas', body);
   return data;
 }
+
+/** @param {number} id @param {object} body */
+export async function updateAgendaCita(id, body) {
+  const { data } = await api.patch(`/agenda/citas/${encodeURIComponent(id)}`, body);
+  return data;
+}

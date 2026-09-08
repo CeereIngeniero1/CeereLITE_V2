@@ -2,6 +2,9 @@ import {
   Body,
   Controller,
   Get,
+  Param,
+  ParseIntPipe,
+  Patch,
   Post,
   Query,
   Request,
@@ -44,5 +47,14 @@ export class AgendaController {
     @Body() dto: CreateAgendaCitaDto,
   ) {
     return this.agendaService.crearCita(req.user, dto);
+  }
+
+  @Patch('citas/:id')
+  actualizarCita(
+    @Request() req: ExpressRequest & { user: JwtPayload },
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateAgendaCitaDto,
+  ) {
+    return this.agendaService.actualizarCita(req.user, id, dto);
   }
 }

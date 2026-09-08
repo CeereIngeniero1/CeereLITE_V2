@@ -425,8 +425,10 @@ GO
 --     AND CONVERT(time, [Hora Inicio CompromisoVI]) < CONVERT(time, @horaFin)
 --     AND CONVERT(time, ISNULL([Hora Fin CompromisoVI], [Hora Inicio CompromisoVI]))
 --         > CONVERT(time, @horaInicio)
+--     AND (@idCita IS NULL OR [Id CompromisoVI] <> @idCita)  -- PATCH: no chocar consigo
 --
 -- Alta (POST /agenda/citas). Id Estado 58 = Vigente. Horas: 1899-12-30 + HH:mm.
+-- Duración = horaInicio/horaFin del cliente (sin default de 30 min).
 --   INSERT INTO dbo.CompromisoVI (
 --     [Entidad Principal], [Entidad Responsable], [Descripción CompromisoIV],
 --     [Fecha Inicio CompromisoVI], [Fecha Fin CompromisoVI],
@@ -442,6 +444,18 @@ GO
 --     @idTipo, @paciente, @profesional,
 --     SYSUTCDATETIME(), 58, @usuarioJwt, @empresa
 --   )
+--
+-- Edición (PATCH /agenda/citas/:id). Duración = horaInicio/horaFin del cliente (sin default de 30 min).
+--   UPDATE dbo.CompromisoVI
+--   SET [Entidad Principal] = @paciente, [Entidad Responsable] = @profesional,
+--       [Descripción CompromisoIV] = @motivo,
+--       [Fecha Inicio CompromisoVI] = @fecha00, [Fecha Fin CompromisoVI] = @fecha00,
+--       [Hora Inicio CompromisoVI] = @horaIni, [Hora Fin CompromisoVI] = @horaFin,
+--       [Id Tipo Compromiso] = @idTipo,
+--       [Entidad Atendida] = @paciente, [Entidad Que Atendio] = @profesional
+--   WHERE [Id CompromisoVI] = @idCita
+--   DELETE FROM dbo.CompromisoVII WHERE [Id CompromisoVI] = @idCita
+--   INSERT INTO dbo.CompromisoVII ([Id CompromisoVI], [Código Objeto]) VALUES (...)
 -- =============================================================================
 CREATE OR ALTER VIEW dbo.[Lite Cnsta AgendaCitas]
 AS
@@ -562,3 +576,4 @@ LEFT JOIN dbo.Objeto AS o
 LEFT JOIN dbo.[Unidad Tiempo] AS ut
   ON o.[Id Unidad Tiempo] = ut.[Id Unidad Tiempo];
 GO
+

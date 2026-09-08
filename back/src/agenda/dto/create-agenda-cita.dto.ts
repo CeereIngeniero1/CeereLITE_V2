@@ -27,11 +27,10 @@ export class CreateAgendaCitaDto {
   @Matches(/^\d{2}:\d{2}$/)
   horaInicio!: string;
 
-  /** HH:mm — se recalcula si hay procedimientos */
-  @IsOptional()
+  /** HH:mm — duración de la cita (sin default de 30 min) */
   @IsString()
   @Matches(/^\d{2}:\d{2}$/)
-  horaFin?: string;
+  horaFin!: string;
 
   @IsOptional()
   @IsString()

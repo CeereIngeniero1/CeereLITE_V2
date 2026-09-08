@@ -11,7 +11,6 @@ import { CreateAgendaCitaDto } from './dto/create-agenda-cita.dto';
 const ESTADOS_CANCELADOS = [60, 61, 64, 71];
 const ID_ESTADO_VIGENTE = 58;
 const HORA_BASE = '1899-12-30';
-const DURACION_DEFAULT_MIN = 30;
 const PROC_TOP = 40;
 
 export type AgendaProcedimientoDto = {
@@ -98,9 +97,29 @@ function minutesToHm(min: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-function duracionMinutos(tiempos: number[]): number {
-  const sum = tiempos.reduce((acc, n) => acc + (Number.isFinite(n) ? n : 0), 0);
-  return sum > 0 ? sum : DURACION_DEFAULT_MIN;
+function sumaTiempos(tiempos: number[]): number {
+  return tiempos.reduce((acc, n) => acc + (Number.isFinite(n) ? n : 0), 0);
+}
+
+function resolverHoraFin(
+  inicioMin: number,
+  horaFinRaw: string | undefined,
+  tiempos: number[],
+): string {
+  const fromClient = hmToMinutes(String(horaFinRaw ?? '').trim());
+  if (fromClient != null && fromClient > inicioMin) {
+    return minutesToHm(fromClient);
+  }
+  const sum = sumaTiempos(tiempos);
+  if (sum > 0) {
+    const fin = inicioMin + sum;
+    if (fin > inicioMin && fin <= 23 * 60 + 59) {
+      return minutesToHm(fin);
+    }
+  }
+  throw new BadRequestException(
+    'horaFin debe ser posterior a horaInicio (sin duración por defecto)',
+  );
 }
 
 function mapProcedimiento(
@@ -275,16 +294,11 @@ export class AgendaService {
       throw new BadRequestException('horaInicio debe ser HH:mm');
     }
     const procedimientos = await this.resolveProcedimientos(dto.codigosObjeto);
-    const minutos = duracionMinutos(
+    const horaFin = resolverHoraFin(
+      inicioMin,
+      dto.horaFin,
       procedimientos.map((p) => p.tiempoMinutos),
     );
-    const horaFin = minutesToHm(inicioMin + minutos);
-    const finMin = hmToMinutes(horaFin);
-    if (finMin == null || finMin <= inicioMin) {
-      throw new BadRequestException(
-        'horaFin debe ser posterior a horaInicio',
-      );
-    }
     const paciente = dto.documentoPaciente.trim();
     const profesional = dto.documentoProfesional.trim();
     const motivo =
@@ -306,25 +320,13 @@ export class AgendaService {
     const horaIniSql = horaSql(dto.horaInicio);
     const horaFinSql = horaSql(horaFin);
 
-    const choques = await this.dataSource.query<{ id: number }[]>(
-      `
-      SELECT TOP 1 [Id CompromisoVI] AS id
-      FROM dbo.CompromisoVI
-      WHERE LTRIM(RTRIM([Entidad Responsable])) = LTRIM(RTRIM(@0))
-        AND [Fecha Inicio CompromisoVI] >= CONVERT(datetime, @1, 120)
-        AND [Fecha Inicio CompromisoVI] < CONVERT(datetime, @2, 120)
-        AND ISNULL([Id Estado], 0) NOT IN (${ESTADOS_CANCELADOS.join(', ')})
-        AND CONVERT(time, [Hora Inicio CompromisoVI]) < CONVERT(time, @4)
-        AND CONVERT(time, ISNULL([Hora Fin CompromisoVI], [Hora Inicio CompromisoVI]))
-            > CONVERT(time, @3)
-      `,
-      [profesional, desdeSql, hastaExclSql, horaIniSql, horaFinSql],
+    await this.assertHorarioLibre(
+      profesional,
+      desdeSql,
+      hastaExclSql,
+      horaIniSql,
+      horaFinSql,
     );
-    if (choques.length) {
-      throw new ConflictException(
-        'Ese horario ya está ocupado para el profesional',
-      );
-    }
 
     const colDigitacion = '[Fecha Digitaci\u00f3n CompromisoVI]';
     const result = await this.dataSource.query(
@@ -389,6 +391,148 @@ export class AgendaService {
       );
     }
     return { idCita };
+  }
+
+  async actualizarCita(
+    user: JwtPayload,
+    idRaw: number,
+    dto: CreateAgendaCitaDto,
+  ): Promise<{ idCita: number }> {
+    const idCita = Number(idRaw);
+    if (!Number.isInteger(idCita) || idCita < 1) {
+      throw new BadRequestException('id de cita no válido');
+    }
+    const exists = await this.dataSource.query<{ id: number }[]>(
+      `SELECT TOP 1 [Id CompromisoVI] AS id FROM dbo.CompromisoVI WHERE [Id CompromisoVI] = @0`,
+      [idCita],
+    );
+    if (!exists.length) {
+      throw new NotFoundException('Cita no encontrada');
+    }
+
+    const fecha = parseYmd(dto.fecha);
+    if (!fecha) {
+      throw new BadRequestException('fecha debe ser YYYY-MM-DD');
+    }
+    const inicioMin = hmToMinutes(dto.horaInicio);
+    if (inicioMin == null) {
+      throw new BadRequestException('horaInicio debe ser HH:mm');
+    }
+    const procedimientos = await this.resolveProcedimientos(dto.codigosObjeto);
+    const horaFin = resolverHoraFin(
+      inicioMin,
+      dto.horaFin,
+      procedimientos.map((p) => p.tiempoMinutos),
+    );
+    const paciente = dto.documentoPaciente.trim();
+    const profesional = dto.documentoProfesional.trim();
+    const motivo =
+      String(dto.motivo ?? '').trim() ||
+      procedimientos.map((p) => p.descripcion || p.codigo).join(', ');
+    if (!paciente || !profesional) {
+      throw new BadRequestException('paciente y profesional son obligatorios');
+    }
+    if (!motivo) {
+      throw new BadRequestException(
+        'Indique el motivo o seleccione un procedimiento',
+      );
+    }
+    const idTipo = await this.resolveIdTipoCompromiso(dto.idTipoCompromiso);
+    const docUsuario = String(user.documentoEntidad ?? '').trim();
+    const desdeSql = ymdToSqlDateTime(fecha);
+    const hastaExclSql = ymdExclusiveEndSql(fecha);
+    const horaIniSql = horaSql(dto.horaInicio);
+    const horaFinSql = horaSql(horaFin);
+
+    await this.assertHorarioLibre(
+      profesional,
+      desdeSql,
+      hastaExclSql,
+      horaIniSql,
+      horaFinSql,
+      idCita,
+    );
+
+    await this.dataSource.query(
+      `
+      UPDATE dbo.CompromisoVI
+      SET [Entidad Principal] = @0,
+          [Entidad Responsable] = @1,
+          [Descripci\u00f3n CompromisoIV] = @2,
+          [Fecha Inicio CompromisoVI] = CONVERT(datetime, @3, 120),
+          [Fecha Fin CompromisoVI] = CONVERT(datetime, @3, 120),
+          [Hora Inicio CompromisoVI] = CONVERT(datetime, @4, 120),
+          [Hora Fin CompromisoVI] = CONVERT(datetime, @5, 120),
+          [Id Tipo Compromiso] = @6,
+          [Entidad Atendida] = @0,
+          [Entidad Que Atendio] = @1,
+          [DocumentoCambioCita] = @8
+      WHERE [Id CompromisoVI] = @7
+      `,
+      [
+        paciente,
+        profesional,
+        motivo,
+        desdeSql,
+        horaIniSql,
+        horaFinSql,
+        idTipo,
+        idCita,
+        docUsuario,
+      ],
+    );
+
+    await this.dataSource.query(
+      `DELETE FROM dbo.CompromisoVII WHERE [Id CompromisoVI] = @0`,
+      [idCita],
+    );
+    for (const proc of procedimientos) {
+      await this.dataSource.query(
+        `
+        INSERT INTO dbo.CompromisoVII ([Id CompromisoVI], [Código Objeto])
+        VALUES (@0, @1)
+        `,
+        [idCita, proc.codigo],
+      );
+    }
+    return { idCita };
+  }
+
+  private async assertHorarioLibre(
+    profesional: string,
+    desdeSql: string,
+    hastaExclSql: string,
+    horaIniSql: string,
+    horaFinSql: string,
+    excludeId?: number,
+  ): Promise<void> {
+    const choques = await this.dataSource.query<{ id: number }[]>(
+      `
+      SELECT TOP 1 [Id CompromisoVI] AS id
+      FROM dbo.CompromisoVI
+      WHERE LTRIM(RTRIM([Entidad Responsable])) = LTRIM(RTRIM(@0))
+        AND [Fecha Inicio CompromisoVI] >= CONVERT(datetime, @1, 120)
+        AND [Fecha Inicio CompromisoVI] < CONVERT(datetime, @2, 120)
+        AND ISNULL([Id Estado], 0) NOT IN (${ESTADOS_CANCELADOS.join(', ')})
+        AND CONVERT(time, [Hora Inicio CompromisoVI]) < CONVERT(time, @4)
+        AND CONVERT(time, ISNULL([Hora Fin CompromisoVI], [Hora Inicio CompromisoVI]))
+            > CONVERT(time, @3)
+        AND (@5 IS NULL OR [Id CompromisoVI] <> @5)
+      `,
+      [
+        profesional,
+        desdeSql,
+        hastaExclSql,
+        horaIniSql,
+        horaFinSql,
+        excludeId ?? null,
+      ],
+    );
+    if (choques.length) {
+      throw new ConflictException(
+        'Ese horario ya está ocupado para el profesional',
+      );
+    }
   }
 
   private async resolveProcedimientos(
