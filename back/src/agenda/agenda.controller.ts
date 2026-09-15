@@ -37,8 +37,11 @@ export class AgendaController {
   }
 
   @Get('citas')
-  listCitas(@Query('fecha') fecha?: string) {
-    return this.agendaService.listCitasDelDia(fecha);
+  listCitas(
+    @Query('fecha') fecha?: string,
+    @Query('documentoEmpresa') documentoEmpresa?: string,
+  ) {
+    return this.agendaService.listCitasDelDia(fecha, documentoEmpresa);
   }
 
   @Post('citas')

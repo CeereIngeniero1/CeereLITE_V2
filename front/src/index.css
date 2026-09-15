@@ -1917,6 +1917,26 @@ button.hc-module-head:active:not(:disabled) {
   color: var(--sidebar-fg-muted);
 }
 
+.brand-detail {
+  font-size: 0.68rem;
+  color: var(--sidebar-fg-muted);
+  opacity: 0.88;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 11rem;
+}
+
+.empresa-select-dialog {
+  width: min(420px, 100%);
+}
+
+.empresa-select-dialog .modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
 button.brand-meta-btn {
   padding: 0;
   margin: 0;
@@ -2341,7 +2361,19 @@ button.brand-meta-btn:active:not(:disabled) {
   min-height: 0;
 }
 
-.app-main:has(.agenda-page) {
+.app-main .programaciones-page {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.app-main:has(.agenda-page),
+.app-main:has(.programaciones-page) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -2454,8 +2486,106 @@ button.brand-meta-btn:active:not(:disabled) {
   padding: 1rem 1.25rem;
 }
 
-.agenda-page .alert {
+.agenda-page .alert,
+.programaciones-page .alert {
   margin: 0.65rem 1.1rem 0;
+}
+
+.programaciones-page > .muted {
+  padding: 1rem 1.25rem;
+}
+
+.programaciones-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0.85rem 1.1rem 1.1rem;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+}
+
+.programaciones-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  color: var(--text);
+  background: var(--surface-card);
+}
+
+.programaciones-table th,
+.programaciones-table td {
+  border: 1px solid var(--stroke);
+  padding: 0.35rem 0.5rem;
+  vertical-align: middle;
+}
+
+.programaciones-table th {
+  background: var(--surface-input);
+  color: var(--text-secondary, var(--text-muted));
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.programaciones-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  font-weight: 700;
+  color: inherit;
+  cursor: pointer;
+}
+
+button.programaciones-sort:hover:not(:disabled),
+button.programaciones-sort:active:not(:disabled) {
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+  transform: none;
+}
+
+.programaciones-pro {
+  font-weight: 700;
+  background: var(--surface-raised, var(--surface-input));
+  color: var(--text);
+  white-space: nowrap;
+  vertical-align: top;
+  cursor: default;
+}
+
+.programaciones-row {
+  cursor: pointer;
+}
+
+.programaciones-row:hover td:not(.programaciones-pro) {
+  background: var(--surface-hover);
+}
+
+.programaciones-row--cancelada {
+  cursor: default;
+}
+
+.programaciones-row--cancelada td {
+  color: var(--text-muted);
+}
+
+.programaciones-row--cancelada td:not(.programaciones-pro) {
+  background: var(--surface-input);
+}
+
+.programaciones-row--cancelada:hover td:not(.programaciones-pro) {
+  background: var(--surface-hover);
 }
 
 .agenda-cal-wrap {

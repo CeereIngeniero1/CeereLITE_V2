@@ -202,10 +202,17 @@ export class AgendaService {
     }));
   }
 
-  async listCitasDelDia(fechaRaw: string | undefined): Promise<AgendaDiaDto> {
+  async listCitasDelDia(
+    fechaRaw: string | undefined,
+    documentoEmpresaRaw?: string,
+  ): Promise<AgendaDiaDto> {
     const fecha = parseYmd(fechaRaw);
     if (!fecha) {
       throw new BadRequestException('fecha debe ser YYYY-MM-DD');
+    }
+    const documentoEmpresa = String(documentoEmpresaRaw ?? '').trim();
+    if (!documentoEmpresa) {
+      throw new BadRequestException('documentoEmpresa es obligatorio');
     }
     const desdeSql = ymdToSqlDateTime(fecha);
     const hastaExclSql = ymdExclusiveEndSql(fecha);
@@ -231,9 +238,10 @@ export class AgendaService {
       FROM dbo.[Lite Cnsta AgendaCitas]
       WHERE Fecha >= CONVERT(datetime, @0, 120)
         AND Fecha < CONVERT(datetime, @1, 120)
+        AND LTRIM(RTRIM(ISNULL(DocumentoEmpresa, N''))) = LTRIM(RTRIM(@2))
       ORDER BY NombreProfesional, HoraInicio, IdCita
       `,
-      [desdeSql, hastaExclSql],
+      [desdeSql, hastaExclSql, documentoEmpresa],
     );
 
     const citas: AgendaCitaDto[] = rows.map((row) => ({

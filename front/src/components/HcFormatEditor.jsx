@@ -55,9 +55,8 @@ export const HcFormatEditor = forwardRef(function HcFormatEditor(
       const currentPayload = payloadRef.current;
       if (currentPayload) {
         applyHcPayload(doc, currentPayload, { origin: API_ORIGIN });
-      } else {
-        applyHcAutofill(doc, autofillRef.current);
       }
+      applyHcAutofill(doc, autofillRef.current);
       applyEntidadImages(doc, entidadHttpRef.current);
       appliedRef.current = true;
     }

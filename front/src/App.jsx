@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './auth/AuthContext';
+import { CompanyProvider } from './auth/CompanyContext';
 import { ThemeProvider } from './theme/ThemeContext';
 import { PrivateRoute } from './routes/PrivateRoute';
 import { AppLayout } from './layout/AppLayout';
@@ -9,6 +10,8 @@ import PlaceholderPage from './pages/PlaceholderPage';
 import UsuariosPage from './pages/UsuariosPage';
 import EvolucionPage from './pages/EvolucionPage';
 import AgendaPage from './pages/AgendaPage';
+import ProgramacionesPage from './pages/ProgramacionesPage';
+import EmpresaPage from './pages/EmpresaPage';
 import './index.css';
 
 export default function App() {
@@ -16,7 +19,8 @@ export default function App() {
     <ThemeProvider>
       <AuthProvider>
         <BrowserRouter>
-          <Routes>
+          <CompanyProvider>
+            <Routes>
           <Route path="/login" element={<LoginPage />} />
 
           <Route element={<PrivateRoute />}>
@@ -24,7 +28,12 @@ export default function App() {
               <Route path="/" element={<Navigate to="/principal/home" replace />} />
               <Route path="/principal/home" element={<HomePage />} />
               <Route path="/principal/agenda" element={<AgendaPage />} />
+              <Route
+                path="/principal/programaciones"
+                element={<ProgramacionesPage />}
+              />
               <Route path="/principal/evolucion" element={<EvolucionPage />} />
+              <Route path="/principal/empresa" element={<EmpresaPage />} />
               <Route
                 path="/principal/facturacion"
                 element={
@@ -75,7 +84,8 @@ export default function App() {
           </Route>
 
           <Route path="*" element={<Navigate to="/principal/home" replace />} />
-          </Routes>
+            </Routes>
+          </CompanyProvider>
         </BrowserRouter>
       </AuthProvider>
     </ThemeProvider>

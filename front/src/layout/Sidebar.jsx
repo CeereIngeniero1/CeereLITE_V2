@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { useCompany } from '../auth/CompanyContext';
 import { useTheme } from '../theme/ThemeContext';
 import { BrandLockup } from '../components/BrandLogo';
 import { UserProfileModal } from '../components/UserProfileModal';
@@ -8,8 +9,10 @@ import { UserProfileModal } from '../components/UserProfileModal';
 const moduleLinks = [
   { to: '/principal/home', label: 'Inicio', icon: '⌂' },
   { to: '/principal/agenda', label: 'Agenda', icon: '▦' },
+  { to: '/principal/programaciones', label: 'Programaciones', icon: '☰' },
   { to: '/principal/usuarios', label: 'Usuarios', icon: '👥' },
   { to: '/principal/evolucion', label: 'Historias clínicas', icon: '⚕' },
+  { to: '/principal/empresa', label: 'Empresa', icon: '🏛' },
 ];
 
 function shortLoggedName(user) {
@@ -33,6 +36,7 @@ export function Sidebar() {
   const [facturaOpen, setFacturaOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const { user, logout } = useAuth();
+  const { nombreComercialEmpresa } = useCompany();
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
@@ -58,6 +62,7 @@ export function Sidebar() {
           size="sm"
           subtitle={open ? 'CEERESIO LITE' : undefined}
           meta={open ? displayName || undefined : undefined}
+          detail={open ? nombreComercialEmpresa || undefined : undefined}
           onMetaClick={open ? () => setProfileOpen(true) : undefined}
         />
       </div>

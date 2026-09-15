@@ -3,7 +3,6 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   createEvaluacion,
   createNotaAclaratoria,
-  fetchCompanies,
   fetchEvolucionDetalle,
   fetchEvolucionesPaciente,
   fetchFormatoHcContenido,
@@ -15,6 +14,7 @@ import {
   patchEvolucionDiagnosticos,
 } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { useCompany } from '../auth/CompanyContext';
 import { HcAccordionSection } from '../components/HcAccordionSection';
 import { HcAnexosModal } from '../components/HcAnexosModal';
 import { HcFormatEditor } from '../components/HcFormatEditor';
@@ -157,6 +157,11 @@ function parentescoLabel(parentescos, id) {
   return row?.label ?? '';
 }
 
+function hcTextoOpcional(value, fallback) {
+  const s = String(value ?? '').trim();
+  return s || fallback;
+}
+
 /** Entero de catálogo: null si falta o es 0 (evita FK inválida). */
 function optionalFkInt(value) {
   if (value == null || value === '') return null;
@@ -220,14 +225,13 @@ export default function EvolucionPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { documentoEmpresa, nombreComercialEmpresa } = useCompany();
   const documentoPaciente = location.state?.documentoPaciente;
   const formatRef = useRef(null);
 
   const [pacienteDatos, setPacienteDatos] = useState(null);
   const [patientFormFields, setPatientFormFields] = useState(null);
   const [lista, setLista] = useState([]);
-  const [companies, setCompanies] = useState([]);
-  const [docEmpresa, setDocEmpresa] = useState('');
 
   const [selectedId, setSelectedId] = useState(null);
   const [selectedOrigen, setSelectedOrigen] = useState('evolucion');
@@ -291,15 +295,9 @@ export default function EvolucionPage() {
     setError('');
     (async () => {
       try {
-        const [datos, cos] = await Promise.all([
-          fetchPacienteDatos(documentoPaciente),
-          fetchCompanies(),
-        ]);
+        const datos = await fetchPacienteDatos(documentoPaciente);
         if (cancel) return;
         setPacienteDatos(datos);
-        const coArr = Array.isArray(cos) ? cos : [];
-        setCompanies(coArr);
-        setDocEmpresa((prev) => prev || (coArr[0]?.documentoEmpresa ?? ''));
         const ev = await fetchEvolucionesPaciente(documentoPaciente);
         if (cancel) return;
         setLista(Array.isArray(ev) ? ev : []);
@@ -604,7 +602,7 @@ export default function EvolucionPage() {
         formFields: patientFormFields,
         evolucionSnapshot,
         documentoPaciente,
-        documentoEmpresa: docEmpresa,
+        documentoEmpresa,
         diagnosticoGeneral,
         diagnosticoEspecifico,
         idTipoEvaluacion: formatoFile ? 4 : 1,
@@ -722,12 +720,7 @@ export default function EvolucionPage() {
     if (!demografia) return documentoPaciente ?? '';
     return demografia.nombreCompleto ?? documentoPaciente;
   }, [demografia, documentoPaciente]);
-  const nombreEmpresa = useMemo(() => {
-    const selected = companies.find((c) => c.documentoEmpresa === docEmpresa);
-    return String(
-      selected?.nombreComercialEmpresa ?? companies[0]?.nombreComercialEmpresa ?? '',
-    ).trim();
-  }, [companies, docEmpresa]);
+  const nombreEmpresa = nombreComercialEmpresa;
   const selectedItem = useMemo(
     () =>
       lista.find(
@@ -922,12 +915,12 @@ export default function EvolucionPage() {
       T11: estadoCivil,
       T12: ocupacion,
       T13: eps,
-      T15: acompananteNombre,
-      T16: acompananteParentesco,
-      T17: acompananteTel,
-      T18: responsable,
-      T19: responsableParentesco,
-      T20: responsableTel,
+      T15: hcTextoOpcional(acompananteNombre, 'Sin asignar'),
+      T16: hcTextoOpcional(acompananteParentesco, 'Sin asignar'),
+      T17: hcTextoOpcional(acompananteTel, '000-00-00'),
+      T18: hcTextoOpcional(responsable, 'Sin asignar'),
+      T19: hcTextoOpcional(responsableParentesco, 'Sin asignar'),
+      T20: hcTextoOpcional(responsableTel, '000-00-00'),
       T21: user?.nombreUsuario ?? '',
       T22: hora,
       T26: tel,
@@ -1470,7 +1463,7 @@ export default function EvolucionPage() {
                         logoFileUrl={formatoLogoFileUrl}
                         entidadFileUrls={entidadFileUrls}
                         entidadHttpUrls={entidadHttpUrls}
-                        autofill={formatoPayload ? undefined : formatoAutofill}
+                        autofill={formatoAutofill}
                         payload={formatoPayload}
                         disabled={isSelectedClosed}
                       />

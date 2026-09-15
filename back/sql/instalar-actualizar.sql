@@ -399,7 +399,7 @@ GO
 -- =============================================================================
 -- Lite Cnsta AgendaCitas
 -- Fuente: dbo.CompromisoVI (citas).
--- Usado por: GET /api/v1/agenda/citas?fecha=yyyy-MM-dd
+-- Usado por: GET /api/v1/agenda/citas?fecha=yyyy-MM-dd&documentoEmpresa=
 --
 -- ColorTipo: decimal OLE/BGR de [Tipo Compromiso].[Descripción Tipo Compromiso]
 -- (p. ej. 65535 = amarillo). Front: R = n & 255, G = (n >> 8) & 255, B = (n >> 16) & 255.
@@ -409,10 +409,11 @@ GO
 --          IdTipoCompromiso, TipoCompromiso, ColorTipo,
 --          DocumentoPaciente, NombrePaciente,
 --          DocumentoProfesional, NombreProfesional,
---          Motivo, Estado
+--          Motivo, Estado, DocumentoEmpresa
 --   FROM dbo.[Lite Cnsta AgendaCitas]
 --   WHERE Fecha >= CONVERT(datetime, @0, 120)   -- 'yyyy-MM-dd 00:00:00'
 --     AND Fecha <  CONVERT(datetime, @1, 120)   -- día siguiente 00:00:00
+--     AND LTRIM(RTRIM(ISNULL(DocumentoEmpresa, N''))) = LTRIM(RTRIM(@2))
 --   ORDER BY NombreProfesional, HoraInicio, IdCita
 --
 -- Choque al crear (POST /agenda/citas). Canceladas: 60, 61, 64, 71.
@@ -474,7 +475,8 @@ SELECT c.[Id CompromisoVI] AS IdCita,
        c.[Entidad Responsable] AS DocumentoProfesional,
        pro.[Nombre Completo Entidad] AS NombreProfesional,
        c.[Descripción CompromisoIV] AS Motivo,
-       est.Estado AS Estado
+       est.Estado AS Estado,
+       LTRIM(RTRIM(c.[Documento Empresa])) AS DocumentoEmpresa
 FROM dbo.CompromisoVI AS c
 LEFT JOIN dbo.Entidad AS pac
   ON c.[Entidad Atendida] = pac.[Documento Entidad]

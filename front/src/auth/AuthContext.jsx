@@ -7,7 +7,7 @@ import {
   useState,
 } from 'react';
 import * as api from '../api/client';
-import { clearStoredToken, getStoredToken, setStoredToken } from '../config';
+import { clearStoredEmpresa, clearStoredToken, getStoredToken, setStoredToken } from '../config';
 
 const AuthContext = createContext(null);
 
@@ -29,6 +29,7 @@ export function AuthProvider({ children }) {
       .catch((e) => {
         if (e.response?.status === 401) {
           clearStoredToken();
+          clearStoredEmpresa();
           setUser(null);
         }
       })
@@ -40,11 +41,13 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(() => {
     clearStoredToken();
+    clearStoredEmpresa();
     setUser(null);
   }, []);
 
   const login = useCallback(async (username, password) => {
     const data = await api.login(username, password);
+    clearStoredEmpresa();
     setStoredToken(data.token);
     try {
       const me = await api.fetchMe();

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { API_V1, clearStoredToken, getStoredToken } from '../config.js';
+import { API_V1, clearStoredEmpresa, clearStoredToken, getStoredToken } from '../config.js';
 
 export const api = axios.create({
   baseURL: API_V1,
@@ -27,6 +27,7 @@ api.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       clearStoredToken();
+      clearStoredEmpresa();
     }
     return Promise.reject(err);
   },
@@ -340,9 +341,11 @@ export async function fetchRdaCatalogFixed(segment, q) {
   return data;
 }
 
-/** @param {string} fecha YYYY-MM-DD */
-export async function fetchAgendaCitas(fecha) {
-  const { data } = await api.get('/agenda/citas', { params: { fecha } });
+/** @param {string} fecha YYYY-MM-DD @param {string} documentoEmpresa */
+export async function fetchAgendaCitas(fecha, documentoEmpresa) {
+  const { data } = await api.get('/agenda/citas', {
+    params: { fecha, documentoEmpresa },
+  });
   return data;
 }
 

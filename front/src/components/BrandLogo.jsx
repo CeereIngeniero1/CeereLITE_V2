@@ -3,6 +3,7 @@ export function BrandLockup({
   white = false,
   subtitle,
   meta,
+  detail,
   onMetaClick,
   size = 'md',
 }) {
@@ -23,7 +24,7 @@ export function BrandLockup({
         src={src}
         alt="ceere"
       />
-      {subtitle || meta ? (
+      {subtitle || meta || detail ? (
         <div className="brand-lockup-copy">
           {subtitle ? <span className="brand-subtitle">{subtitle}</span> : null}
           {meta ? (
@@ -40,6 +41,7 @@ export function BrandLockup({
               <span className="brand-meta">{meta}</span>
             )
           ) : null}
+          {detail ? <span className="brand-detail">{detail}</span> : null}
         </div>
       ) : null}
     </div>

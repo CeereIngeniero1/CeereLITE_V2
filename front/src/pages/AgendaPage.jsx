@@ -1,18 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import {
   createAgendaCita,
   fetchAgendaCitas,
   fetchAgendaProcedimientos,
-  fetchAgendaProfesionales,
   fetchAgendaTiposCompromiso,
-  fetchCompanies,
   fetchPacienteDatos,
   fetchUsers,
   messageFromAxiosError,
   updateAgendaCita,
 } from '../api/client';
 import { PatientEditModal } from '../components/PatientEditModal';
+import { useCompany } from '../auth/CompanyContext';
 
 const ESTADOS_CANCELADOS = new Set([60, 61, 64, 71]);
 const SLOT_INICIO = 6 * 60;
@@ -143,8 +142,9 @@ function isCancelada(cita) {
 }
 
 function citasDeProfesional(citas, documento) {
+  const doc = String(documento ?? '').trim();
   return citas.filter(
-    (c) => String(c.documentoProfesional ?? '') === String(documento ?? ''),
+    (c) => (String(c.documentoProfesional ?? '').trim() || '—') === doc,
   );
 }
 
@@ -873,13 +873,11 @@ function CitaResumenPopover({
 
 export default function AgendaPage() {
   const navigate = useNavigate();
+  const { documentoEmpresa, nombreComercialEmpresa } = useCompany();
   const [fecha, setFecha] = useState(() => ymdLocal(new Date()));
   const [citas, setCitas] = useState([]);
-  const [profesionales, setProfesionales] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [filtroProf, setFiltroProf] = useState('');
-  const [docEmpresa, setDocEmpresa] = useState('');
-  const [nombreSede, setNombreSede] = useState('');
   const [loading, setLoading] = useState(true);
   const [catalogReady, setCatalogReady] = useState(false);
   const [error, setError] = useState('');
@@ -895,10 +893,15 @@ export default function AgendaPage() {
   const esHoy = fecha === ymdLocal(new Date());
 
   async function loadCitas(opts = {}) {
+    if (!documentoEmpresa) {
+      setCitas([]);
+      if (!opts.silent) setLoading(false);
+      return;
+    }
     if (!opts.silent) setLoading(true);
     setError('');
     try {
-      const data = await fetchAgendaCitas(fecha);
+      const data = await fetchAgendaCitas(fecha, documentoEmpresa);
       setCitas(Array.isArray(data?.citas) ? data.citas : []);
     } catch (e) {
       setCitas([]);
@@ -912,18 +915,9 @@ export default function AgendaPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [profs, companies, tiposRows] = await Promise.all([
-          fetchAgendaProfesionales(),
-          fetchCompanies(),
-          fetchAgendaTiposCompromiso(),
-        ]);
+        const tiposRows = await fetchAgendaTiposCompromiso();
         if (cancelled) return;
-        setProfesionales(Array.isArray(profs) ? profs : []);
         setTipos(Array.isArray(tiposRows) ? tiposRows : []);
-        const coArr = Array.isArray(companies) ? companies : [];
-        const first = coArr[0];
-        setDocEmpresa((prev) => prev || (first?.documentoEmpresa ?? ''));
-        setNombreSede(first?.nombreComercialEmpresa ?? '');
       } catch {
         /* catálogos opcionales */
       } finally {
@@ -937,8 +931,8 @@ export default function AgendaPage() {
 
   useEffect(() => {
     void loadCitas();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- recargar al cambiar fecha
-  }, [fecha]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- recargar al cambiar fecha o sede
+  }, [fecha, documentoEmpresa]);
 
   useEffect(() => {
     if (!esHoy) return undefined;
@@ -951,16 +945,37 @@ export default function AgendaPage() {
     return () => clearInterval(id);
   }, [esHoy]);
 
+  const profesionalesDelDia = useMemo(() => {
+    const byDoc = new Map();
+    for (const c of citas) {
+      const documento = String(c.documentoProfesional ?? '').trim() || '—';
+      if (!byDoc.has(documento)) {
+        byDoc.set(documento, {
+          documento,
+          nombre: c.nombreProfesional || documento,
+        });
+      }
+    }
+    return [...byDoc.values()].sort((a, b) =>
+      a.nombre.localeCompare(b.nombre, 'es'),
+    );
+  }, [citas]);
+
+  useEffect(() => {
+    if (
+      filtroProf &&
+      !profesionalesDelDia.some((p) => p.documento === filtroProf)
+    ) {
+      setFiltroProf('');
+    }
+  }, [profesionalesDelDia, filtroProf]);
+
   const columnas = useMemo(() => {
-    const list = profesionales
-      .map((p) => ({
-        documento: String(p.documentoProfesional ?? '').trim(),
-        nombre: p.nombreProfesional || p.documentoProfesional,
-      }))
-      .filter((p) => p.documento);
-    if (filtroProf) return list.filter((c) => c.documento === filtroProf);
-    return list;
-  }, [profesionales, filtroProf]);
+    if (filtroProf) {
+      return profesionalesDelDia.filter((c) => c.documento === filtroProf);
+    }
+    return profesionalesDelDia;
+  }, [profesionalesDelDia, filtroProf]);
 
   const nowTop =
     esHoy && nowMin >= SLOT_INICIO && nowMin <= GRID_FIN
@@ -1054,6 +1069,13 @@ export default function AgendaPage() {
           <div className="agenda-date-title">{formatDiaLargo(fecha)}</div>
         </div>
         <div className="agenda-topbar-right">
+          <Link
+            className="agenda-today-btn"
+            to="/principal/programaciones"
+            state={{ fecha }}
+          >
+            Lista de citas
+          </Link>
           <input
             className="agenda-date-input"
             type="date"
@@ -1070,12 +1092,9 @@ export default function AgendaPage() {
             aria-label="Profesional"
           >
             <option value="">Todos</option>
-            {profesionales.map((p) => (
-              <option
-                key={p.documentoProfesional}
-                value={p.documentoProfesional}
-              >
-                {p.nombreProfesional}
+            {profesionalesDelDia.map((p) => (
+              <option key={p.documento} value={p.documento}>
+                {p.nombre}
               </option>
             ))}
           </select>
@@ -1088,7 +1107,7 @@ export default function AgendaPage() {
         <p className="muted agenda-loading">Cargando citas…</p>
       ) : columnas.length === 0 ? (
         <p className="muted agenda-loading">
-          No hay profesionales en el catálogo.
+          No hay citas este día para la empresa seleccionada.
         </p>
       ) : (
         <div className="agenda-cal-wrap">
@@ -1253,8 +1272,8 @@ export default function AgendaPage() {
           fecha={fecha}
           horaInicio={modal.horaInicio || modal.cita?.hora || '06:00'}
           profesional={modal.profesional}
-          documentoEmpresa={docEmpresa}
-          nombreSede={nombreSede}
+          documentoEmpresa={documentoEmpresa}
+          nombreSede={nombreComercialEmpresa}
           tipos={tipos}
           citaInicial={modal.cita || null}
           onClose={() => setModal(null)}
