@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -179,6 +179,20 @@ function strOrNullIfEmpty(v: string | null | undefined): string | null {
   return s === '' ? null : s;
 }
 
+function mergeDemografiaNoNulos(
+  base: PacienteDemografiaDto,
+  extra: PacienteDemografiaDto,
+): PacienteDemografiaDto {
+  const out: PacienteDemografiaDto = { ...base };
+  (Object.keys(extra) as (keyof PacienteDemografiaDto)[]).forEach((key) => {
+    const v = extra[key];
+    if (v != null && v !== '') {
+      (out[key] as PacienteDemografiaDto[typeof key]) = v;
+    }
+  });
+  return out;
+}
+
 function nombreCortoUsuario(
   primerNombre: unknown,
   primerApellido: unknown,
@@ -278,6 +292,8 @@ type PacienteCatalogSegment = (typeof PACIENTE_CATALOG_SEGMENTS)[number];
 
 @Injectable()
 export class EvolucionService {
+  private readonly logger = new Logger(EvolucionService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly config: ConfigService,
@@ -286,8 +302,11 @@ export class EvolucionService {
   async listEvolucionesMedicas(
     documentoEntidad: string,
   ): Promise<EvolucionListItemDto[]> {
-    const [evoRows, notaRows] = await Promise.all([
-      this.dataSource.query<
+    const doc = String(documentoEntidad ?? '').trim();
+    let evoRows: Record<string, string | number | Date | null>[] = [];
+    let notaRows: Record<string, string | number | Date | null>[] = [];
+    try {
+      evoRows = await this.dataSource.query<
         Record<string, string | number | Date | null>[]
       >(
         `
@@ -299,9 +318,13 @@ export class EvolucionService {
       FROM dbo.[Lite Cnsta HcListaEvaluacion]
       WHERE [Documento Entidad] = @0
     `,
-        [documentoEntidad],
-      ),
-      this.dataSource.query<
+        [doc],
+      );
+    } catch {
+      evoRows = [];
+    }
+    try {
+      notaRows = await this.dataSource.query<
         Record<string, string | number | Date | null>[]
       >(
         `
@@ -311,9 +334,11 @@ export class EvolucionService {
       FROM dbo.[Lite Cnsta HcListaNotaAclaratoria]
       WHERE [Documento Usuario] = @0
     `,
-        [documentoEntidad],
-      ),
-    ]);
+        [doc],
+      );
+    } catch {
+      notaRows = [];
+    }
 
     const evoluciones: Array<EvolucionListItemDto & { ts: number }> =
       evoRows.map((row) => {
@@ -1074,6 +1099,181 @@ export class EvolucionService {
 
   async getPacienteDatos(documento: string): Promise<PacienteDatosResponseDto> {
     const doc = documento.trim();
+    let demografia =
+      (await this.demografiaDesdeLite(doc)) ??
+      (await this.demografiaDesdeCabecera(doc)) ??
+      (await this.demografiaDesdeListaPaciente(doc));
+
+    try {
+      const extra = await this.demografiaDesdeRelacionadorSiHay(doc);
+      if (extra) {
+        demografia = mergeDemografiaNoNulos(demografia, extra);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Relacionador HC ${doc}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    let evolucionSnapshot: EvolucionSnapshotDto | null = null;
+    try {
+      evolucionSnapshot = await this.getEvolucionSnapshot(doc);
+    } catch (err) {
+      this.logger.warn(
+        `Snapshot HC ${doc}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      evolucionSnapshot = null;
+    }
+    return { demografia, evolucionSnapshot };
+  }
+
+  private async fotoPaciente(doc: string): Promise<{
+    fotoUrl: string | null;
+    fotoArchivo: string | null;
+  }> {
+    try {
+      return resolveFotoEntidad(
+        this.config,
+        await getFotoEntidadFileName(this.dataSource, doc),
+        doc,
+      );
+    } catch {
+      return { fotoUrl: null, fotoArchivo: null };
+    }
+  }
+
+  private async demografiaDesdeLite(
+    doc: string,
+  ): Promise<PacienteDemografiaDto | null> {
+    try {
+      const rows = await this.dataSource.query<
+        Record<string, string | number | Date | null>[]
+      >(
+        `
+        SELECT TOP (1)
+          DocumentoPaciente, IdTipoDocumento, DescripcionTipoDocumento, TipoDocumentoBase,
+          PrimerApellido, SegundoApellido, PrimerNombre, SegundoNombre, NombreCompleto,
+          SexoPaciente, Sexo, IdSexo, Edad, Direccion, Telefono, FechaNacimiento,
+          IdMunicipioResidencia, NombreMunicipioResidencia,
+          IdOcupacion, CodigoOcupacion, Ocupacion, DescripcionOcupacion, FotoArchivo
+        FROM dbo.[Lite Cnsta HcPacienteDemografia]
+        WHERE LTRIM(RTRIM(DocumentoPaciente)) = LTRIM(RTRIM(@0))
+        `,
+        [doc],
+      );
+      if (!rows.length) return null;
+      return this.mapLiteDemografia(rows[0], doc);
+    } catch (err) {
+      this.logger.warn(
+        `Lite HcPacienteDemografia ${doc}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  private async demografiaDesdeCabecera(
+    doc: string,
+  ): Promise<PacienteDemografiaDto | null> {
+    try {
+      const rows = await this.dataSource.query<
+        Record<string, string | number | Date | null>[]
+      >(
+        `
+        SELECT TOP (1)
+          [Nombre Paciente], [Documento Paciente], [Id Tipo Documento], [Tipo Documento],
+          [Primer Apellido Paciente], [Segundo Apellido Paciente],
+          [Primer Nombre Paciente], [Segundo Nombre Paciente],
+          [Direccion Paciente], [Id Ciudad], Ciudad, [Celular Paciente],
+          [Fecha Nacimiento Paciente], [Edad Paciente], [Id Sexo], Sexo,
+          [Id Ocupación], Ocupación
+        FROM dbo.[Lite Cnsta HcPacienteCabecera]
+        WHERE LTRIM(RTRIM([Documento Paciente])) = LTRIM(RTRIM(@0))
+        `,
+        [doc],
+      );
+      if (!rows.length) return null;
+      const row = rows[0];
+      const foto = await this.fotoPaciente(doc);
+      const nacimiento = row['Fecha Nacimiento Paciente'];
+      const edadCalc = calcularEdadDesdeFecha(nacimiento);
+      return {
+        ...this.demografiaVacia(
+          doc,
+          strOrNull(row['Nombre Paciente']) ?? doc,
+          foto,
+        ),
+        idTipoDocumento: numOrNull(row['Id Tipo Documento']),
+        descripcionTipoDocumento: strOrNull(row['Tipo Documento']),
+        documentoPaciente: strOrNull(row['Documento Paciente']) ?? doc,
+        primerApellido: strOrNull(row['Primer Apellido Paciente']),
+        segundoApellido: strOrNull(row['Segundo Apellido Paciente']),
+        primerNombre: strOrNull(row['Primer Nombre Paciente']),
+        segundoNombre: strOrNull(row['Segundo Nombre Paciente']),
+        nombreCompleto: strOrNull(row['Nombre Paciente']),
+        sexoPaciente: strOrNull(row.Sexo),
+        sexo: strOrNull(row.Sexo),
+        idSexo: numOrNull(row['Id Sexo']),
+        edad: edadCalc ?? numOrNull(row['Edad Paciente']),
+        direccion: strOrNull(row['Direccion Paciente']),
+        telefono: strOrNull(row['Celular Paciente']),
+        fechaNacimiento: toDateTimeLocal(nacimiento),
+        idMunicipioResidencia: numOrNull(row['Id Ciudad']),
+        nombreMunicipioResidencia: strOrNull(row.Ciudad),
+        idOcupacion: numOrNull(row['Id Ocupación']),
+        ocupacion: strOrNull(row['Ocupación']),
+        descripcionOcupacion: strOrNull(row['Ocupación']),
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Lite HcPacienteCabecera ${doc}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  private async mapLiteDemografia(
+    row: Record<string, string | number | Date | null>,
+    doc: string,
+  ): Promise<PacienteDemografiaDto> {
+    const foto = await this.fotoPaciente(doc);
+    const nacimiento = row.FechaNacimiento;
+    const edadCalc = calcularEdadDesdeFecha(nacimiento);
+    const archivoVista = strOrNull(row.FotoArchivo);
+    return {
+      ...this.demografiaVacia(
+        doc,
+        strOrNull(row.NombreCompleto) ?? doc,
+        foto,
+      ),
+      idTipoDocumento: numOrNull(row.IdTipoDocumento),
+      descripcionTipoDocumento: strOrNull(row.DescripcionTipoDocumento),
+      tipoDocumentoBase: strOrNull(row.TipoDocumentoBase),
+      documentoPaciente: strOrNull(row.DocumentoPaciente) ?? doc,
+      primerApellido: strOrNull(row.PrimerApellido),
+      segundoApellido: strOrNull(row.SegundoApellido),
+      primerNombre: strOrNull(row.PrimerNombre),
+      segundoNombre: strOrNull(row.SegundoNombre),
+      nombreCompleto: strOrNull(row.NombreCompleto),
+      sexoPaciente: strOrNull(row.SexoPaciente),
+      sexo: strOrNull(row.Sexo),
+      idSexo: numOrNull(row.IdSexo),
+      edad: edadCalc ?? numOrNull(row.Edad),
+      direccion: strOrNull(row.Direccion),
+      telefono: strOrNull(row.Telefono),
+      fechaNacimiento: toDateTimeLocal(nacimiento),
+      idMunicipioResidencia: numOrNull(row.IdMunicipioResidencia),
+      nombreMunicipioResidencia: strOrNull(row.NombreMunicipioResidencia),
+      idOcupacion: numOrNull(row.IdOcupacion),
+      codigoOcupacion: strOrNull(row.CodigoOcupacion),
+      ocupacion: strOrNull(row.Ocupacion),
+      descripcionOcupacion: strOrNull(row.DescripcionOcupacion),
+      fotoArchivo: foto.fotoArchivo ?? archivoVista,
+    };
+  }
+
+  private async demografiaDesdeRelacionadorSiHay(
+    doc: string,
+  ): Promise<PacienteDemografiaDto | null> {
     const rows = await this.dataSource.query<
       Record<string, string | number | Date | null>[]
     >(
@@ -1096,91 +1296,180 @@ export class EvolucionService {
     `,
       [doc],
     );
+    if (!rows.length) return null;
+    return this.demografiaDesdeRelacionador(rows[0], doc);
+  }
 
-    let demografia: PacienteDemografiaDto | null = null;
-    if (rows.length > 0) {
-      const row = rows[0];
-      let edad = numOrNull(row.Edad);
-      const edadCalc = calcularEdadDesdeFecha(row.FechaNacimientoBase);
-      if (edadCalc != null) {
-        if (edad == null || edad !== edadCalc) {
-          try {
-            await this.dataSource.query(
-              `UPDATE [dbo].[EntidadIII]
+  private demografiaVacia(
+    doc: string,
+    nombre: string | null,
+    foto: { fotoUrl: string | null; fotoArchivo: string | null },
+  ): PacienteDemografiaDto {
+    return {
+      idTipoDocumento: null,
+      descripcionTipoDocumento: null,
+      tipoDocumentoBase: null,
+      documentoPaciente: doc,
+      primerApellido: null,
+      segundoApellido: null,
+      primerNombre: null,
+      segundoNombre: null,
+      nombreCompleto: nombre,
+      sexoPaciente: null,
+      sexo: null,
+      codigoSexo: null,
+      idSexo: null,
+      edad: null,
+      direccion: null,
+      telefono: null,
+      fechaNacimiento: null,
+      idIdentidadGenero: null,
+      idSexoIdentidadGenero: null,
+      codigoIdentidadGenero: null,
+      identidadGenero: null,
+      idZonaResidenciaLegacy: null,
+      talla: null,
+      peso: null,
+      idEtnia: null,
+      comunidadEtnica: null,
+      idDiscapacidad: null,
+      idPaisNacionalidad: null,
+      codigoPaisNacionalidad: null,
+      nombrePaisNacionalidad: null,
+      idPaisResidencia: null,
+      codigoPaisResidencia: null,
+      nombrePaisResidencia: null,
+      idMunicipioResidencia: null,
+      codigoMunicipioResidencia: null,
+      nombreMunicipioResidencia: null,
+      idZonaResidencia: null,
+      descripcionZonaResidencia: null,
+      codigoZonaResidencia: null,
+      zonaResidencia: null,
+      codigoEtnia: null,
+      etnia: null,
+      descripcionEtnia: null,
+      codigoDiscapacidad: null,
+      discapacidad: null,
+      descripcionDiscapacidad: null,
+      idOcupacion: null,
+      codigoOcupacion: null,
+      ocupacion: null,
+      descripcionOcupacion: null,
+      alergias: null,
+      alergeno: null,
+      fotoUrl: foto.fotoUrl,
+      fotoArchivo: foto.fotoArchivo,
+    };
+  }
+
+  private async demografiaDesdeListaPaciente(
+    doc: string,
+  ): Promise<PacienteDemografiaDto> {
+    try {
+      const rows = await this.dataSource.query<
+        { id: string; name: string }[]
+      >(
+        `
+        SELECT TOP 1 id, name
+        FROM dbo.[Lite Cnsta ListaPaciente]
+        WHERE LTRIM(RTRIM(id)) = LTRIM(RTRIM(@0))
+        `,
+        [doc],
+      );
+      if (!rows.length) {
+        const foto = await this.fotoPaciente(doc);
+        return this.demografiaVacia(doc, doc, foto);
+      }
+      const foto = await this.fotoPaciente(doc);
+      return this.demografiaVacia(
+        String(rows[0].id ?? doc).trim() || doc,
+        String(rows[0].name ?? '').trim() || doc,
+        foto,
+      );
+    } catch {
+      const foto = await this.fotoPaciente(doc);
+      return this.demografiaVacia(doc, doc, foto);
+    }
+  }
+
+  private async demografiaDesdeRelacionador(
+    row: Record<string, string | number | Date | null>,
+    doc: string,
+  ): Promise<PacienteDemografiaDto> {
+    let edad = numOrNull(row.Edad);
+    const edadCalc = calcularEdadDesdeFecha(row.FechaNacimientoBase);
+    if (edadCalc != null) {
+      if (edad == null || edad !== edadCalc) {
+        try {
+          await this.dataSource.query(
+            `UPDATE [dbo].[EntidadIII]
                SET [Edad EntidadIII] = @0
                WHERE LTRIM(RTRIM([Documento Entidad])) = @1`,
-              [edadCalc, doc],
-            );
-          } catch {
-            /* sync opcional */
-          }
+            [edadCalc, doc],
+          );
+        } catch {
+          /* sync opcional */
         }
-        edad = edadCalc;
       }
-
-      demografia = {
-        idTipoDocumento: numOrNull(row.IdTipodeDocumento),
-        descripcionTipoDocumento: strOrNull(row.DescripciTipoDocumento),
-        tipoDocumentoBase: strOrNull(row.TipoDocumentoBase),
-        documentoPaciente: strOrNull(row.DocumentoPaciente),
-        primerApellido: strOrNull(row.PrimerApellidoBase),
-        segundoApellido: strOrNull(row.SegundoApellidoBase),
-        primerNombre: strOrNull(row.PrimerNombreBase),
-        segundoNombre: strOrNull(row.SegundoNombreBase),
-        nombreCompleto: strOrNull(row.NombreCompletoPaciente),
-        sexoPaciente: strOrNull(row.SexoPaciente),
-        sexo: strOrNull(row.Sexo),
-        codigoSexo: strOrNull(row['CódigoSexo']),
-        idSexo: numOrNull(row.IdSexo),
-        edad,
-        direccion: strOrNull(row.Direccion),
-        telefono: strOrNull(row.Tel),
-        fechaNacimiento: toDateTimeLocal(row.FechaNacimientoBase),
-        idIdentidadGenero: numOrNull(row['Id Identidad Genero']),
-        idSexoIdentidadGenero: numOrNull(row.IdSexoIdentidadGenero),
-        codigoIdentidadGenero: strOrNull(row.codigoIdentidadGeneroBase),
-        identidadGenero: strOrNull(row.IdentidadGeneroBase),
-        idZonaResidenciaLegacy: numOrNull(row['Id Zona Residencia']),
-        talla: strOrNull(row.Talla),
-        peso: strOrNull(row.Peso),
-        idEtnia: numOrNull(row.IdEtnia),
-        comunidadEtnica: strOrNull(row.ComunidadEtnica),
-        idDiscapacidad: numOrNull(row.IdDiscapacidad),
-        idPaisNacionalidad: numOrNull(row.IdPaisNacionalidad),
-        codigoPaisNacionalidad: strOrNull(row.CodigoPaisNacionalidad),
-        nombrePaisNacionalidad: strOrNull(row.NombrePaisNACIONALIDAD),
-        idPaisResidencia: numOrNull(row.IdPaisRecidencia),
-        codigoPaisResidencia: strOrNull(row.CodigoPaisRecidencia),
-        nombrePaisResidencia: strOrNull(row.NombrePaisRecidencia),
-        idMunicipioResidencia: numOrNull(row.IdMunicipioRecidencia),
-        codigoMunicipioResidencia: strOrNull(row.CodigoMunicipioRecidencia),
-        nombreMunicipioResidencia: strOrNull(row.NombreMunicipioRecidencia),
-        idZonaResidencia: numOrNull(row.IdZonaResidencia),
-        descripcionZonaResidencia: strOrNull(row['DescripciónZonaResidencia']),
-        codigoZonaResidencia: strOrNull(row['CódigoZonaResidencia']),
-        zonaResidencia: strOrNull(row.ZonaResidencia),
-        codigoEtnia: strOrNull(row['CódigoEtnia']),
-        etnia: strOrNull(row.Etnia),
-        descripcionEtnia: strOrNull(row['DescripciónEtnia']),
-        codigoDiscapacidad: strOrNull(row.Codigo),
-        discapacidad: strOrNull(row.Discapacidad),
-        descripcionDiscapacidad: strOrNull(row.DescripcionDiscapacidad),
-        idOcupacion: numOrNull(row['IdOcupación']),
-        codigoOcupacion: strOrNull(row['CódigoOcupación']),
-        ocupacion: strOrNull(row['Ocupación']),
-        descripcionOcupacion: strOrNull(row['DescripciónOcupación']),
-        alergias: strOrNull(row.Alergias),
-        alergeno: strOrNull(row.Alergeno),
-        ...resolveFotoEntidad(
-          this.config,
-          await getFotoEntidadFileName(this.dataSource, doc),
-          doc,
-        ),
-      };
+      edad = edadCalc;
     }
 
-    const evolucionSnapshot = await this.getEvolucionSnapshot(doc);
-    return { demografia, evolucionSnapshot };
+    return {
+      idTipoDocumento: numOrNull(row.IdTipodeDocumento),
+      descripcionTipoDocumento: strOrNull(row.DescripciTipoDocumento),
+      tipoDocumentoBase: strOrNull(row.TipoDocumentoBase),
+      documentoPaciente: strOrNull(row.DocumentoPaciente),
+      primerApellido: strOrNull(row.PrimerApellidoBase),
+      segundoApellido: strOrNull(row.SegundoApellidoBase),
+      primerNombre: strOrNull(row.PrimerNombreBase),
+      segundoNombre: strOrNull(row.SegundoNombreBase),
+      nombreCompleto: strOrNull(row.NombreCompletoPaciente),
+      sexoPaciente: strOrNull(row.SexoPaciente),
+      sexo: strOrNull(row.Sexo),
+      codigoSexo: strOrNull(row['CódigoSexo']),
+      idSexo: numOrNull(row.IdSexo),
+      edad,
+      direccion: strOrNull(row.Direccion),
+      telefono: strOrNull(row.Tel),
+      fechaNacimiento: toDateTimeLocal(row.FechaNacimientoBase),
+      idIdentidadGenero: numOrNull(row['Id Identidad Genero']),
+      idSexoIdentidadGenero: numOrNull(row.IdSexoIdentidadGenero),
+      codigoIdentidadGenero: strOrNull(row.codigoIdentidadGeneroBase),
+      identidadGenero: strOrNull(row.IdentidadGeneroBase),
+      idZonaResidenciaLegacy: numOrNull(row['Id Zona Residencia']),
+      talla: strOrNull(row.Talla),
+      peso: strOrNull(row.Peso),
+      idEtnia: numOrNull(row.IdEtnia),
+      comunidadEtnica: strOrNull(row.ComunidadEtnica),
+      idDiscapacidad: numOrNull(row.IdDiscapacidad),
+      idPaisNacionalidad: numOrNull(row.IdPaisNacionalidad),
+      codigoPaisNacionalidad: strOrNull(row.CodigoPaisNacionalidad),
+      nombrePaisNacionalidad: strOrNull(row.NombrePaisNACIONALIDAD),
+      idPaisResidencia: numOrNull(row.IdPaisRecidencia),
+      codigoPaisResidencia: strOrNull(row.CodigoPaisRecidencia),
+      nombrePaisResidencia: strOrNull(row.NombrePaisRecidencia),
+      idMunicipioResidencia: numOrNull(row.IdMunicipioRecidencia),
+      codigoMunicipioResidencia: strOrNull(row.CodigoMunicipioRecidencia),
+      nombreMunicipioResidencia: strOrNull(row.NombreMunicipioRecidencia),
+      idZonaResidencia: numOrNull(row.IdZonaResidencia),
+      descripcionZonaResidencia: strOrNull(row['DescripciónZonaResidencia']),
+      codigoZonaResidencia: strOrNull(row['CódigoZonaResidencia']),
+      zonaResidencia: strOrNull(row.ZonaResidencia),
+      codigoEtnia: strOrNull(row['CódigoEtnia']),
+      etnia: strOrNull(row.Etnia),
+      descripcionEtnia: strOrNull(row['DescripciónEtnia']),
+      codigoDiscapacidad: strOrNull(row.Codigo),
+      discapacidad: strOrNull(row.Discapacidad),
+      descripcionDiscapacidad: strOrNull(row.DescripcionDiscapacidad),
+      idOcupacion: numOrNull(row['IdOcupación']),
+      codigoOcupacion: strOrNull(row['CódigoOcupación']),
+      ocupacion: strOrNull(row['Ocupación']),
+      descripcionOcupacion: strOrNull(row['DescripciónOcupación']),
+      alergias: strOrNull(row.Alergias),
+      alergeno: strOrNull(row.Alergeno),
+      ...(await this.fotoPaciente(doc)),
+    };
   }
 
   private async getEvolucionSnapshot(

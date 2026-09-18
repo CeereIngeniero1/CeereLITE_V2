@@ -62,15 +62,8 @@ export default function App() {
                 }
               />
               <Route path="/principal/usuarios" element={<UsuariosPage />} />
-              {/* RDA va integrado en Evolución; rutas antiguas del menú RDA */}
-              <Route
-                path="/principal/rda"
-                element={<Navigate to="/principal/evolucion" replace />}
-              />
-              <Route
-                path="/principal/rda/*"
-                element={<Navigate to="/principal/evolucion" replace />}
-              />
+              <Route path="/principal/rda" element={<Navigate to="/principal/home" replace />} />
+              <Route path="/principal/rda/*" element={<Navigate to="/principal/home" replace />} />
               <Route
                 path="/principal/configuracion"
                 element={

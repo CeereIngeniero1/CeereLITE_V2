@@ -244,7 +244,7 @@ export function persistHcFormValues(doc) {
 /** Deja el formato listo para extraer HTML impreso (valores + espejos de textarea). */
 export function freezeHcFormatForPrint(doc) {
   persistHcFormValues(doc);
-  if (!doc) return;
+  if (!doc?.body) return;
   for (const ta of doc.querySelectorAll('textarea')) {
     let mirror = ta.nextElementSibling;
     if (!mirror || !mirror.classList?.contains('print-mirror')) {
@@ -253,6 +253,29 @@ export function freezeHcFormatForPrint(doc) {
       ta.insertAdjacentElement('afterend', mirror);
     }
     mirror.textContent = ta.value ?? '';
+  }
+  const skipTags = new Set([
+    'HTML',
+    'HEAD',
+    'BODY',
+    'SCRIPT',
+    'STYLE',
+    'LINK',
+    'BR',
+    'IMG',
+    'SVG',
+    'PATH',
+  ]);
+  for (const el of doc.body.querySelectorAll('*')) {
+    if (skipTags.has(el.tagName)) continue;
+    if (el.classList?.contains('print-mirror')) continue;
+    if (el.tagName === 'TEXTAREA') continue;
+    if (
+      el.scrollHeight > el.clientHeight + 2 ||
+      el.scrollWidth > el.clientWidth + 2
+    ) {
+      el.setAttribute('data-print-expand', '1');
+    }
   }
 }
 

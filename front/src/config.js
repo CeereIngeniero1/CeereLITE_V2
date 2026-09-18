@@ -51,3 +51,22 @@ export function setStoredEmpresa(empresa) {
 export function clearStoredEmpresa() {
   localStorage.removeItem(EMPRESA_KEY);
 }
+
+const HC_DOC_KEY = 'ceerelite.hc.documentoPaciente';
+
+export function getStoredHcDocumento() {
+  return String(sessionStorage.getItem(HC_DOC_KEY) ?? '').trim();
+}
+
+export function setStoredHcDocumento(documento) {
+  const doc = String(documento ?? '').trim();
+  if (!doc) {
+    sessionStorage.removeItem(HC_DOC_KEY);
+    return;
+  }
+  sessionStorage.setItem(HC_DOC_KEY, doc);
+}
+
+export function clearStoredHcDocumento() {
+  sessionStorage.removeItem(HC_DOC_KEY);
+}

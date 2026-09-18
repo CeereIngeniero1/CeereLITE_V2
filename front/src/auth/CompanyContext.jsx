@@ -30,18 +30,21 @@ export function CompanyProvider({ children }) {
   const [companies, setCompanies] = useState([]);
   const [empresa, setEmpresaState] = useState(null);
   const [ready, setReady] = useState(false);
+  const [catalogError, setCatalogError] = useState('');
 
   useEffect(() => {
     if (!hydrated) return undefined;
     if (!isAuthenticated) {
       setCompanies([]);
       setEmpresaState(null);
+      setCatalogError('');
       setReady(true);
       return undefined;
     }
 
     let cancel = false;
     setReady(false);
+    setCatalogError('');
     (async () => {
       try {
         const rows = await fetchCompanies();
@@ -71,6 +74,7 @@ export function CompanyProvider({ children }) {
         if (!cancel) {
           setCompanies([]);
           setEmpresaState(null);
+          setCatalogError('No se pudieron cargar las empresas.');
         }
       } finally {
         if (!cancel) setReady(true);
@@ -104,8 +108,9 @@ export function CompanyProvider({ children }) {
       setEmpresa,
       ready,
       needsPick,
+      catalogError,
     }),
-    [companies, documentoEmpresa, empresa, setEmpresa, ready, needsPick],
+    [companies, documentoEmpresa, empresa, setEmpresa, ready, needsPick, catalogError],
   );
 
   return (

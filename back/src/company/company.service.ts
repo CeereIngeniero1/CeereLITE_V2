@@ -19,7 +19,7 @@ export class CompanyService {
     `);
 
     if (!rows.length) {
-      throw new NotFoundException('No se encontró información de la empresa');
+      return [];
     }
 
     return rows.map((r) => ({

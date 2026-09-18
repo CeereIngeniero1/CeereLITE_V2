@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { API_V1, clearStoredEmpresa, clearStoredToken, getStoredToken } from '../config.js';
+import { API_V1, clearStoredEmpresa, clearStoredHcDocumento, clearStoredToken, getStoredToken } from '../config.js';
 
 export const api = axios.create({
   baseURL: API_V1,
@@ -28,6 +28,7 @@ api.interceptors.response.use(
     if (err.response?.status === 401) {
       clearStoredToken();
       clearStoredEmpresa();
+      clearStoredHcDocumento();
     }
     return Promise.reject(err);
   },
@@ -349,6 +350,14 @@ export async function fetchAgendaCitas(fecha, documentoEmpresa) {
   return data;
 }
 
+/** @param {string} fecha YYYY-MM-DD @param {string} documentoEmpresa */
+export async function fetchAgendaEspacios(fecha, documentoEmpresa) {
+  const { data } = await api.get('/agenda/espacios', {
+    params: { fecha, documentoEmpresa },
+  });
+  return data;
+}
+
 export async function fetchAgendaProfesionales() {
   const { data } = await api.get('/agenda/profesionales');
   return data;
@@ -362,6 +371,14 @@ export async function fetchAgendaTiposCompromiso() {
 /** @param {string} [q] */
 export async function fetchAgendaProcedimientos(q) {
   const { data } = await api.get('/agenda/procedimientos', {
+    params: q ? { q } : {},
+  });
+  return data;
+}
+
+/** @param {string} [q] */
+export async function fetchAgendaPacientes(q) {
+  const { data } = await api.get('/agenda/pacientes', {
     params: q ? { q } : {},
   });
   return data;

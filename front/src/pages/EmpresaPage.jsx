@@ -7,16 +7,11 @@ export default function EmpresaPage() {
     documentoEmpresa,
     nombreComercialEmpresa,
     setEmpresa,
+    catalogError,
   } = useCompany();
-  const [picked, setPicked] = useState(documentoEmpresa);
   const [ok, setOk] = useState('');
 
-  function onSave(e) {
-    e.preventDefault();
-    const row = companies.find(
-      (c) => String(c.documentoEmpresa ?? '').trim() === picked,
-    );
-    if (!row) return;
+  function onPick(row) {
     setEmpresa(row);
     setOk('Empresa de trabajo actualizada.');
   }
@@ -27,7 +22,7 @@ export default function EmpresaPage() {
       <h1>Empresa de trabajo</h1>
       <p className="muted">
         La sede activa filtra la agenda y se registra al crear citas y
-        evoluciones.
+        evoluciones. Clic en una fila para elegir.
       </p>
 
       {nombreComercialEmpresa ? (
@@ -43,32 +38,35 @@ export default function EmpresaPage() {
       )}
 
       {ok ? <div className="alert alert-ok">{ok}</div> : null}
+      {catalogError ? <div className="alert alert-error">{catalogError}</div> : null}
 
-      <form className="card form" onSubmit={onSave}>
-        <label>
-          Cambiar empresa
-          <select
-            value={picked}
-            onChange={(e) => {
-              setPicked(e.target.value);
-              setOk('');
-            }}
-          >
-            <option value="">— Selecciona —</option>
+      {catalogError ? null : companies.length === 0 ? (
+        <p className="muted">No hay empresas en el catálogo.</p>
+      ) : (
+        <div className="card empresa-page-list">
+          <div className="empresa-select-list" role="listbox" aria-label="Empresas">
             {companies.map((c) => {
               const doc = String(c.documentoEmpresa ?? '').trim();
+              const selected = doc === documentoEmpresa;
               return (
-                <option key={doc} value={doc}>
-                  {c.nombreComercialEmpresa || doc}
-                </option>
+                <button
+                  key={doc}
+                  type="button"
+                  className={
+                    selected
+                      ? 'empresa-select-item is-selected'
+                      : 'empresa-select-item'
+                  }
+                  onClick={() => onPick(c)}
+                >
+                  <span>{c.nombreComercialEmpresa || doc}</span>
+                  <span className="muted td-mono">{doc}</span>
+                </button>
               );
             })}
-          </select>
-        </label>
-        <button type="submit" disabled={!picked || picked === documentoEmpresa}>
-          Guardar
-        </button>
-      </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

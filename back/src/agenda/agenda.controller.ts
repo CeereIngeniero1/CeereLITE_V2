@@ -36,6 +36,19 @@ export class AgendaController {
     return this.agendaService.listProcedimientos(q);
   }
 
+  @Get('pacientes')
+  listPacientes(@Query('q') q?: string) {
+    return this.agendaService.listPacientes(q);
+  }
+
+  @Get('espacios')
+  listEspacios(
+    @Query('fecha') fecha?: string,
+    @Query('documentoEmpresa') documentoEmpresa?: string,
+  ) {
+    return this.agendaService.listEspaciosDelDia(fecha, documentoEmpresa);
+  }
+
   @Get('citas')
   listCitas(
     @Query('fecha') fecha?: string,

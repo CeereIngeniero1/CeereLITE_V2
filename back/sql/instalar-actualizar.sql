@@ -14,6 +14,35 @@
   - En SQL y en Nest usar corchetes: dbo.[Lite Cnsta HcHistorial]
   - No usar el prefijo vw_Lite.
 
+  Cómo cambiar de base
+  --------------------
+  1. Apuntar back/.env a la nueva base (DB_NAME=...).
+  2. Ejecutar este script completo en esa base.
+  3. La base debe ser CeereSio (tablas Entidad, CompromisoVI, Evaluación Entidad, etc.).
+
+  Vistas Lite que crea este archivo (todas las lecturas JOIN del API)
+  -------------------------------------------------------------------
+  HC:        HcListaEvaluacion, HcListaNotaAclaratoria, HcHistorial,
+             HcDocumentoAnexo, HcObservacion, HcNotaAclaratoria,
+             HcEvaluacionDetalle, HcPacienteCabecera, HcPacienteSnapshot,
+             HcPacienteDemografia
+  Pacientes: ListaPaciente
+  Empresa:   Empresa, UsuarioPerfil, TipoEvaluacion
+  Agenda:    AgendaCitas, AgendaProfesional, AgendaTipoCompromiso,
+             AgendaProcedimientos, AgendaCitaProcedimientos,
+             AgendaPrimaria, AgendaSecundaria
+
+  No van aquí (objetos nativos de Ceere; deben existir en la clínica)
+  -------------------------------------------------------------------
+  Login: Contraseña + Entidad
+  Foto: Entidad.[Foto Entidad]
+  Altas agenda: CompromisoVI / CompromisoVII
+  Altas HC: Evaluación Entidad, Entidad Observacion, Historia Clinica CAPF Notas Aclaratorias
+  Paciente 1888: Entidad1888, sp_Paciente_Guardar, vistas [Cnsta * 1888]
+  Relacionador (opcional): [Cnsta Relacionador Usuarios Info]
+  Catálogo: Parentesco
+  RDA: [Cnsta … 1888] de rda.service.ts
+
   Cómo agregar una consulta nueva
   -------------------------------
   1. CREATE OR ALTER VIEW dbo.[Lite Cnsta Nombre] en este archivo.
@@ -248,7 +277,7 @@ LEFT JOIN EntidadII AS en2
   ON en.[Documento Entidad] = en2.[Documento Entidad]
 LEFT JOIN EntidadIII AS en3
   ON en.[Documento Entidad] = en3.[Documento Entidad]
-INNER JOIN Ciudad
+LEFT JOIN Ciudad
   ON en2.[Id Ciudad] = Ciudad.[Id Ciudad]
 LEFT JOIN Sexo
   ON en3.[Id Sexo] = Sexo.[Id Sexo]
@@ -256,11 +285,11 @@ LEFT JOIN [Estado Civil] AS esc
   ON en3.[Id Estado Civil] = esc.[Id Estado Civil]
 LEFT JOIN EntidadVI AS en6
   ON en.[Documento Entidad] = en6.[Documento Entidad]
-INNER JOIN Ocupación AS ocu
+LEFT JOIN Ocupación AS ocu
   ON en6.[Id Ocupación] = ocu.[Id Ocupación]
 LEFT JOIN EntidadXXIV AS en24
   ON en.[Documento Entidad] = en24.[Documento Entidad]
-INNER JOIN [Tipo de Afiliado] AS tpa
+LEFT JOIN [Tipo de Afiliado] AS tpa
   ON en24.[Id Tipo de Afiliado] = tpa.[Id Tipo de Afiliado]
 LEFT JOIN Entidad AS enr
   ON en3.[Documento Responsable] = enr.[Documento Entidad]
@@ -304,6 +333,56 @@ LEFT JOIN [Tipo de Afiliado] AS tpa
   ON en24.[Id Tipo de Afiliado] = tpa.[Id Tipo de Afiliado]
 LEFT JOIN [Unidad de Medida Edad] AS ume
   ON en3.[Id Unidad de Medida Edad] = ume.[Id Unidad de Medida Edad];
+GO
+
+-- =============================================================================
+-- Lite Cnsta HcPacienteDemografia
+-- Usado por: GET /evolucion/paciente/:documento/datos (panel Datos del paciente)
+-- Solo LEFT JOIN: el paciente aparece aunque falten ciudad, ocupación o EPS.
+-- =============================================================================
+CREATE OR ALTER VIEW dbo.[Lite Cnsta HcPacienteDemografia]
+AS
+SELECT en.[Documento Entidad] AS DocumentoPaciente,
+       en.[Id Tipo de Documento] AS IdTipoDocumento,
+       td.[Descripción Tipo de Documento] AS DescripcionTipoDocumento,
+       td.[Tipo de Documento] AS TipoDocumentoBase,
+       en.[Primer Apellido Entidad] AS PrimerApellido,
+       en.[Segundo Apellido Entidad] AS SegundoApellido,
+       en.[Primer Nombre Entidad] AS PrimerNombre,
+       en.[Segundo Nombre Entidad] AS SegundoNombre,
+       en.[Nombre Completo Entidad] AS NombreCompleto,
+       Sexo.[Descripción Sexo] AS SexoPaciente,
+       Sexo.[Descripción Sexo] AS Sexo,
+       en3.[Id Sexo] AS IdSexo,
+       en3.[Edad EntidadIII] AS Edad,
+       en2.[Dirección EntidadII] AS Direccion,
+       COALESCE(
+         NULLIF(LTRIM(RTRIM(en2.[Teléfono Celular EntidadII])), ''),
+         NULLIF(LTRIM(RTRIM(en2.[Teléfono No 1 EntidadII])), '')
+       ) AS Telefono,
+       en3.[Fecha Nacimiento EntidadIII] AS FechaNacimiento,
+       Ciudad.[Id Ciudad] AS IdMunicipioResidencia,
+       Ciudad.Ciudad AS NombreMunicipioResidencia,
+       ocu.[Id Ocupación] AS IdOcupacion,
+       ocu.[Código Ocupación] AS CodigoOcupacion,
+       ocu.Ocupación AS Ocupacion,
+       ocu.[Descripción Ocupación] AS DescripcionOcupacion,
+       en.[Foto Entidad] AS FotoArchivo
+FROM Entidad AS en
+LEFT JOIN [Tipo de Documento] AS td
+  ON en.[Id Tipo de Documento] = td.[Id Tipo de Documento]
+LEFT JOIN EntidadII AS en2
+  ON en.[Documento Entidad] = en2.[Documento Entidad]
+LEFT JOIN EntidadIII AS en3
+  ON en.[Documento Entidad] = en3.[Documento Entidad]
+LEFT JOIN Sexo
+  ON en3.[Id Sexo] = Sexo.[Id Sexo]
+LEFT JOIN EntidadVI AS en6
+  ON en.[Documento Entidad] = en6.[Documento Entidad]
+LEFT JOIN Ocupación AS ocu
+  ON en6.[Id Ocupación] = ocu.[Id Ocupación]
+LEFT JOIN Ciudad
+  ON en2.[Id Ciudad] = Ciudad.[Id Ciudad];
 GO
 
 -- =============================================================================
@@ -407,7 +486,7 @@ GO
 -- Nest (AgendaService.listCitasDelDia):
 --   SELECT IdCita, Fecha, HoraInicio, Hora, HoraFin, IdEstado,
 --          IdTipoCompromiso, TipoCompromiso, ColorTipo,
---          DocumentoPaciente, NombrePaciente,
+--          DocumentoPaciente, NombrePaciente, TelefonoPaciente,
 --          DocumentoProfesional, NombreProfesional,
 --          Motivo, Estado, DocumentoEmpresa
 --   FROM dbo.[Lite Cnsta AgendaCitas]
@@ -470,18 +549,24 @@ SELECT c.[Id CompromisoVI] AS IdCita,
        c.[Id Tipo Compromiso] AS IdTipoCompromiso,
        tc.[Tipo Compromiso] AS TipoCompromiso,
        TRY_CAST(tc.[Descripción Tipo Compromiso] AS int) AS ColorTipo,
-       c.[Entidad Atendida] AS DocumentoPaciente,
+       LTRIM(RTRIM(c.[Entidad Atendida])) AS DocumentoPaciente,
        pac.[Nombre Completo Entidad] AS NombrePaciente,
-       c.[Entidad Responsable] AS DocumentoProfesional,
-       pro.[Nombre Completo Entidad] AS NombreProfesional,
+       pii.[Teléfono Celular EntidadII] AS TelefonoPaciente,
+       LTRIM(RTRIM(c.[Entidad Responsable])) AS DocumentoProfesional,
+       ISNULL(
+         NULLIF(LTRIM(RTRIM(pro.[Observaciones Entidad])), N''),
+         LTRIM(RTRIM(pro.[Nombre Completo Entidad]))
+       ) AS NombreProfesional,
        c.[Descripción CompromisoIV] AS Motivo,
        est.Estado AS Estado,
        LTRIM(RTRIM(c.[Documento Empresa])) AS DocumentoEmpresa
 FROM dbo.CompromisoVI AS c
 LEFT JOIN dbo.Entidad AS pac
-  ON c.[Entidad Atendida] = pac.[Documento Entidad]
+  ON LTRIM(RTRIM(c.[Entidad Atendida])) = LTRIM(RTRIM(pac.[Documento Entidad]))
+LEFT JOIN dbo.EntidadII AS pii
+  ON LTRIM(RTRIM(c.[Entidad Atendida])) = LTRIM(RTRIM(pii.[Documento Entidad]))
 LEFT JOIN dbo.Entidad AS pro
-  ON c.[Entidad Responsable] = pro.[Documento Entidad]
+  ON LTRIM(RTRIM(c.[Entidad Responsable])) = LTRIM(RTRIM(pro.[Documento Entidad]))
 LEFT JOIN dbo.Estado AS est
   ON c.[Id Estado] = est.[Id Estado]
 LEFT JOIN dbo.[Tipo Compromiso] AS tc
@@ -577,5 +662,91 @@ LEFT JOIN dbo.Objeto AS o
   ON LTRIM(RTRIM(v.[Código Objeto])) = LTRIM(RTRIM(o.[Código Objeto]))
 LEFT JOIN dbo.[Unidad Tiempo] AS ut
   ON o.[Id Unidad Tiempo] = ut.[Id Unidad Tiempo];
+GO
+
+-- =============================================================================
+-- Lite Cnsta AgendaPrimaria
+-- Horario del día de la entidad primaria (consultorio o profesional dueño del
+-- rango). Compromiso = plantilla (Fecha Inicial/Final, Documento Entidad,
+-- Tipo Entidad: 1 = espacio/consultorio función 26; 2 = profesional función 17).
+-- CompromisoIV = horas materializadas de esa primaria en una fecha.
+-- Estado 7 = activo. Nombre = Observaciones Entidad, si vacío Nombre Completo.
+-- Usado por: GET /api/v1/agenda/espacios?fecha=yyyy-MM-dd&documentoEmpresa=
+--
+-- Nest (AgendaService.listEspaciosDelDia):
+--   SELECT IdPrimaria, Fecha, HoraInicio, HoraFin,
+--          DocumentoPrimaria, NombrePrimaria, TipoEntidad
+--   FROM dbo.[Lite Cnsta AgendaPrimaria]
+--   WHERE Fecha >= CONVERT(datetime, @0, 120)
+--     AND Fecha < CONVERT(datetime, @1, 120)
+--     AND LTRIM(RTRIM(ISNULL(DocumentoEmpresa, N''))) = LTRIM(RTRIM(@2))
+--   ORDER BY NombrePrimaria, HoraInicio, IdPrimaria
+-- =============================================================================
+CREATE OR ALTER VIEW dbo.[Lite Cnsta AgendaPrimaria]
+AS
+SELECT iv.[Id CompromisoIV] AS IdPrimaria,
+       iv.[Fecha CompromisoIV] AS Fecha,
+       FORMAT(iv.[Hora Inicio CompromisoIV], 'HH:mm') AS HoraInicio,
+       FORMAT(iv.[Hora Fin CompromisoIV], 'HH:mm') AS HoraFin,
+       LTRIM(RTRIM(c.[Documento Entidad])) AS DocumentoPrimaria,
+       ISNULL(
+         NULLIF(LTRIM(RTRIM(e.[Observaciones Entidad])), N''),
+         LTRIM(RTRIM(e.[Nombre Completo Entidad]))
+       ) AS NombrePrimaria,
+       c.[Tipo Entidad] AS TipoEntidad,
+       LTRIM(RTRIM(c.[Documento Empresa])) AS DocumentoEmpresa
+FROM dbo.CompromisoIV AS iv
+INNER JOIN dbo.Compromiso AS c
+  ON iv.[Id Compromiso] = c.[Id Compromiso]
+LEFT JOIN dbo.Entidad AS e
+  ON LTRIM(RTRIM(c.[Documento Entidad])) = LTRIM(RTRIM(e.[Documento Entidad]))
+WHERE ISNULL(iv.[Id Estado], 0) = 7
+  AND ISNULL(c.[Id Estado], 0) = 7;
+GO
+
+-- =============================================================================
+-- Lite Cnsta AgendaSecundaria
+-- Horario del día de la secundaria enlazada a una primaria
+-- (CompromisoV.[Documento Entidad Primaria]). Id Compromiso → quien ocupa el
+-- espacio. Estado 7. Nombre = Observaciones Entidad, si vacío Nombre Completo.
+-- Usado por: GET /api/v1/agenda/espacios (anidadas en cada primaria).
+-- POST/PATCH: la cita debe caer dentro de un rango de esta vista.
+--
+-- Nest:
+--   SELECT IdSecundaria, Fecha, HoraInicio, HoraFin,
+--          DocumentoPrimaria, NombrePrimaria,
+--          DocumentoSecundaria, NombreSecundaria
+--   FROM dbo.[Lite Cnsta AgendaSecundaria]
+--   WHERE Fecha >= CONVERT(datetime, @0, 120)
+--     AND Fecha < CONVERT(datetime, @1, 120)
+--     AND LTRIM(RTRIM(ISNULL(DocumentoEmpresa, N''))) = LTRIM(RTRIM(@2))
+--   ORDER BY NombrePrimaria, HoraInicio, IdSecundaria
+-- =============================================================================
+CREATE OR ALTER VIEW dbo.[Lite Cnsta AgendaSecundaria]
+AS
+SELECT v.[Id CompromisoV] AS IdSecundaria,
+       v.[Fecha CompromisoV] AS Fecha,
+       FORMAT(v.[Hora Inicio CompromisoV], 'HH:mm') AS HoraInicio,
+       FORMAT(v.[Hora Fin CompromisoV], 'HH:mm') AS HoraFin,
+       LTRIM(RTRIM(v.[Documento Entidad Primaria])) AS DocumentoPrimaria,
+       ISNULL(
+         NULLIF(LTRIM(RTRIM(ep.[Observaciones Entidad])), N''),
+         LTRIM(RTRIM(ep.[Nombre Completo Entidad]))
+       ) AS NombrePrimaria,
+       LTRIM(RTRIM(c.[Documento Entidad])) AS DocumentoSecundaria,
+       ISNULL(
+         NULLIF(LTRIM(RTRIM(es.[Observaciones Entidad])), N''),
+         LTRIM(RTRIM(es.[Nombre Completo Entidad]))
+       ) AS NombreSecundaria,
+       LTRIM(RTRIM(c.[Documento Empresa])) AS DocumentoEmpresa
+FROM dbo.CompromisoV AS v
+INNER JOIN dbo.Compromiso AS c
+  ON v.[Id Compromiso] = c.[Id Compromiso]
+LEFT JOIN dbo.Entidad AS es
+  ON LTRIM(RTRIM(c.[Documento Entidad])) = LTRIM(RTRIM(es.[Documento Entidad]))
+LEFT JOIN dbo.Entidad AS ep
+  ON LTRIM(RTRIM(v.[Documento Entidad Primaria])) = LTRIM(RTRIM(ep.[Documento Entidad]))
+WHERE ISNULL(v.[Id Estado], 0) = 7
+  AND ISNULL(c.[Id Estado], 0) = 7;
 GO
 

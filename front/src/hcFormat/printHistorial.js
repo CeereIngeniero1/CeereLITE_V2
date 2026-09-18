@@ -3,14 +3,18 @@ import { API_ORIGIN } from '../config';
 import {
   applyEntidadImages,
   applyHcPayload,
-  freezeHcFormatForPrint,
   looksLikeHcPayload,
   parseFormatoFileName,
   parseHcPayload,
   fileUrlToHttp,
 } from './hcFormat';
 import { printHtmlDocument } from './printDocument';
-import { printFooterCss, printFooterHtml } from './printChrome';
+import {
+  printExpandCss,
+  printFooterCss,
+  printFooterHtml,
+  prepareHcDocumentForPrint,
+} from './printChrome';
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -138,12 +142,7 @@ function contentHeight(doc) {
 function unlockAndExpand(iframe) {
   const doc = iframe.contentDocument;
   if (!doc) return;
-  const style = doc.createElement('style');
-  style.setAttribute('data-hc-unlock', '1');
-  style.textContent =
-    'html, body { height: auto !important; min-height: 0 !important; overflow: visible !important; }';
-  (doc.head || doc.documentElement).appendChild(style);
-  freezeHcFormatForPrint(doc);
+  prepareHcDocumentForPrint(doc);
   for (const script of [...doc.querySelectorAll('script')]) {
     script.remove();
   }
@@ -415,6 +414,7 @@ export async function printHistorialHc({
     .hc-hist-item { page-break-after: always; }
     .hc-hist-item:last-child { page-break-after: auto; }
     ${printFooterCss()}
+    ${printExpandCss()}
     @media print {
       html, body { background: #fff; color: #111; }
       body { margin: 12mm; }

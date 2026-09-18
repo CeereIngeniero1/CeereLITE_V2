@@ -7,7 +7,7 @@ import {
   setHcFormatDisabled,
 } from '../hcFormat/hcFormat';
 import { API_ORIGIN } from '../config';
-import { injectPrintFooter } from '../hcFormat/printChrome';
+import { injectPrintFooter, prepareHcDocumentForPrint } from '../hcFormat/printChrome';
 
 function namedControlCount(doc) {
   if (!doc) return 0;
@@ -84,10 +84,12 @@ export const HcFormatEditor = forwardRef(function HcFormatEditor(
       const win = iframe?.contentWindow;
       const doc = iframe?.contentDocument;
       if (!win || !doc) return false;
-      const cleanup = injectPrintFooter(doc);
+      const cleanupExpand = prepareHcDocumentForPrint(doc);
+      const cleanupFooter = injectPrintFooter(doc);
       const done = () => {
         win.removeEventListener('afterprint', done);
-        cleanup();
+        cleanupExpand();
+        cleanupFooter();
       };
       win.addEventListener('afterprint', done);
       window.setTimeout(done, 120000);

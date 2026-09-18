@@ -361,6 +361,11 @@ h1 {
   overflow: hidden;
 }
 
+.app-shell > .modal-backdrop {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+}
+
 .app-content {
   display: flex;
   flex-direction: column;
@@ -933,6 +938,18 @@ button.sidebar-logout:hover:not(:disabled) {
   flex: 1;
 }
 
+.evolucion-empty-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.evolucion-empty-picker .muted {
+  margin: 0;
+}
+
 .evolucion-empresa-nombre {
   margin: 0;
   flex: 0 1 auto;
@@ -1243,6 +1260,10 @@ button.hc-module-head:active:not(:disabled) {
   min-width: 0;
 }
 
+.evolucion-toolbar-patient {
+  flex: 0 1 auto;
+}
+
 .hc-alergias-box {
   border: 1px solid var(--stroke-soft);
   border-radius: var(--radius);
@@ -1293,7 +1314,7 @@ button.hc-module-head:active:not(:disabled) {
 
 .evolucion-toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 1rem;
   justify-content: space-between;
   align-items: flex-start;
@@ -1301,9 +1322,14 @@ button.hc-module-head:active:not(:disabled) {
 
 .evolucion-toolbar-actions {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.5rem;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-left: auto;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .evolucion-toolbar-buttons {
@@ -1325,12 +1351,11 @@ button.hc-module-head:active:not(:disabled) {
 
 .evolucion-more {
   position: relative;
-  min-width: 12.5rem;
-  align-self: stretch;
+  flex: 0 0 auto;
 }
 
 .evolucion-more-toggle {
-  width: 100%;
+  width: auto;
 }
 
 .evolucion-more-menu {
@@ -1931,10 +1956,50 @@ button.hc-module-head:active:not(:disabled) {
   width: min(420px, 100%);
 }
 
-.empresa-select-dialog .modal-actions {
+.empresa-select-list {
+  max-height: 16rem;
+  overflow: auto;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+  margin: 0.5rem 0 0;
+}
+
+.empresa-page-list {
+  padding: 0;
+  overflow: hidden;
+}
+
+.empresa-page-list .empresa-select-list {
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.empresa-select-item {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 1rem;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 0;
+  border-bottom: 1px solid var(--stroke-soft);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.empresa-select-item:last-child {
+  border-bottom: 0;
+}
+
+.empresa-select-item:hover,
+.empresa-select-item.is-selected {
+  background: var(--brand-soft);
 }
 
 button.brand-meta-btn {
@@ -2241,6 +2306,10 @@ button.brand-meta-btn:active:not(:disabled) {
   padding: 1.5rem 1rem 2rem;
   overflow: auto;
   background: var(--overlay);
+}
+
+.paciente-hc-backdrop {
+  z-index: 200;
 }
 
 .modal-backdrop .modal-backdrop {
@@ -2765,15 +2834,18 @@ button.programaciones-sort:active:not(:disabled) {
   z-index: 10;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   overflow: hidden;
-  padding: 5px 7px;
-  border-radius: 5px;
+  padding: 6px 8px;
+  border-radius: 4px;
   border-left: 4px solid;
   font-size: 0.75rem;
   cursor: pointer;
   box-sizing: border-box;
+  text-align: center;
+  opacity: 1;
   transition: box-shadow 0.15s, transform 0.15s;
 }
 
@@ -2785,15 +2857,44 @@ button.programaciones-sort:active:not(:disabled) {
 .agenda-cita-time {
   font-size: 10px;
   font-weight: 650;
+  color: #111;
+}
+
+.agenda-secundaria-celda {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 2px 4px;
+  border: 1px solid rgb(0 0 0 / 18%);
+  border-radius: 3px;
+  background: #f6d5c4;
+  color: #333;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-align: center;
+  overflow: hidden;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.agenda-secundaria-celda:hover {
+  filter: brightness(0.97);
 }
 
 .agenda-cita-patient {
   font-size: 12px;
   font-weight: 650;
-  white-space: nowrap;
+  color: #111;
   overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-word;
   max-width: 100%;
+  line-height: 1.15;
 }
 
 .agenda-cita-type {

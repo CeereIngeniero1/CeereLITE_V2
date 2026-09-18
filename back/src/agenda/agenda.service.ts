@@ -12,6 +12,7 @@ const ESTADOS_CANCELADOS = [60, 61, 64, 71];
 const ID_ESTADO_VIGENTE = 58;
 const HORA_BASE = '1899-12-30';
 const PROC_TOP = 40;
+const PACIENTE_TOP = 40;
 
 export type AgendaProcedimientoDto = {
   codigo: string;
@@ -32,6 +33,7 @@ export type AgendaCitaDto = {
   nombrePaciente: string;
   documentoProfesional: string;
   nombreProfesional: string;
+  telefonoPaciente: string;
   motivo: string;
   estado: string;
   procedimientos: AgendaProcedimientoDto[];
@@ -47,10 +49,38 @@ export type AgendaProfesionalDto = {
   nombreProfesional: string;
 };
 
+export type AgendaPacienteDto = {
+  id: string;
+  id2: string;
+  name: string;
+};
+
 export type AgendaTipoCompromisoDto = {
   idTipoCompromiso: number;
   tipoCompromiso: string;
   colorTipo: number | null;
+};
+
+export type AgendaSecundariaDto = {
+  id: number;
+  documento: string;
+  nombre: string;
+  horaInicio: string;
+  horaFin: string;
+};
+
+export type AgendaPrimariaDto = {
+  documento: string;
+  nombre: string;
+  tipoEntidad: number;
+  horaInicio: string;
+  horaFin: string;
+  secundarias: AgendaSecundariaDto[];
+};
+
+export type AgendaDiaEspaciosDto = {
+  fecha: string;
+  primarias: AgendaPrimariaDto[];
 };
 
 function parseYmd(raw: string | undefined): string | null {
@@ -185,6 +215,33 @@ export class AgendaService {
     return rows.map(mapProcedimiento);
   }
 
+  async listPacientes(qRaw?: string): Promise<AgendaPacienteDto[]> {
+    const q = String(qRaw ?? '').trim();
+    const like = q ? `%${q.replace(/[%_[\]]/g, '')}%` : null;
+    const rows = await this.dataSource.query<
+      { id: string; id2: string; name: string }[]
+    >(
+      like
+        ? `
+      SELECT TOP (${PACIENTE_TOP}) id, id2, name
+      FROM dbo.[Lite Cnsta ListaPaciente]
+      WHERE name LIKE @0 OR id LIKE @0 OR id2 LIKE @0
+      ORDER BY name
+      `
+        : `
+      SELECT TOP (${PACIENTE_TOP}) id, id2, name
+      FROM dbo.[Lite Cnsta ListaPaciente]
+      ORDER BY name
+      `,
+      like ? [like] : [],
+    );
+    return rows.map((row) => ({
+      id: String(row.id ?? '').trim(),
+      id2: String(row.id2 ?? '').trim(),
+      name: String(row.name ?? '').trim(),
+    }));
+  }
+
   async listTiposCompromiso(): Promise<AgendaTipoCompromisoDto[]> {
     const rows = await this.dataSource.query<
       Record<string, string | number | null>[]
@@ -233,6 +290,7 @@ export class AgendaService {
              NombrePaciente,
              DocumentoProfesional,
              NombreProfesional,
+             TelefonoPaciente,
              Motivo,
              Estado
       FROM dbo.[Lite Cnsta AgendaCitas]
@@ -257,6 +315,7 @@ export class AgendaService {
       nombrePaciente: String(row.NombrePaciente ?? ''),
       documentoProfesional: String(row.DocumentoProfesional ?? ''),
       nombreProfesional: String(row.NombreProfesional ?? ''),
+      telefonoPaciente: String(row.TelefonoPaciente ?? ''),
       motivo: String(row.Motivo ?? ''),
       estado: String(row.Estado ?? ''),
       procedimientos: [],
@@ -287,6 +346,101 @@ export class AgendaService {
     }
 
     return { fecha, citas };
+  }
+
+  async listEspaciosDelDia(
+    fechaRaw: string | undefined,
+    documentoEmpresaRaw?: string,
+  ): Promise<AgendaDiaEspaciosDto> {
+    const fecha = parseYmd(fechaRaw);
+    if (!fecha) {
+      throw new BadRequestException('fecha debe ser YYYY-MM-DD');
+    }
+    const documentoEmpresa = String(documentoEmpresaRaw ?? '').trim();
+    if (!documentoEmpresa) {
+      throw new BadRequestException('documentoEmpresa es obligatorio');
+    }
+    const desdeSql = ymdToSqlDateTime(fecha);
+    const hastaExclSql = ymdExclusiveEndSql(fecha);
+    const primRows = await this.dataSource.query<
+      Record<string, string | number | Date | null>[]
+    >(
+      `
+      SELECT IdPrimaria, Fecha, HoraInicio, HoraFin,
+             DocumentoPrimaria, NombrePrimaria, TipoEntidad
+      FROM dbo.[Lite Cnsta AgendaPrimaria]
+      WHERE Fecha >= CONVERT(datetime, @0, 120)
+        AND Fecha < CONVERT(datetime, @1, 120)
+        AND LTRIM(RTRIM(ISNULL(DocumentoEmpresa, N''))) = LTRIM(RTRIM(@2))
+      ORDER BY NombrePrimaria, HoraInicio, IdPrimaria
+      `,
+      [desdeSql, hastaExclSql, documentoEmpresa],
+    );
+    const secRows = await this.dataSource.query<
+      Record<string, string | number | Date | null>[]
+    >(
+      `
+      SELECT IdSecundaria, Fecha, HoraInicio, HoraFin,
+             DocumentoPrimaria, NombrePrimaria,
+             DocumentoSecundaria, NombreSecundaria
+      FROM dbo.[Lite Cnsta AgendaSecundaria]
+      WHERE Fecha >= CONVERT(datetime, @0, 120)
+        AND Fecha < CONVERT(datetime, @1, 120)
+        AND LTRIM(RTRIM(ISNULL(DocumentoEmpresa, N''))) = LTRIM(RTRIM(@2))
+      ORDER BY NombrePrimaria, HoraInicio, IdSecundaria
+      `,
+      [desdeSql, hastaExclSql, documentoEmpresa],
+    );
+
+    const byDoc = new Map<string, AgendaPrimariaDto>();
+    for (const row of primRows) {
+      const documento = String(row.DocumentoPrimaria ?? '').trim();
+      if (!documento) continue;
+      const horaInicio = String(row.HoraInicio ?? '').trim();
+      const horaFin = String(row.HoraFin ?? '').trim();
+      const existing = byDoc.get(documento);
+      if (!existing) {
+        byDoc.set(documento, {
+          documento,
+          nombre: String(row.NombrePrimaria ?? '').trim() || documento,
+          tipoEntidad: Number(row.TipoEntidad ?? 0) || 0,
+          horaInicio,
+          horaFin,
+          secundarias: [],
+        });
+        continue;
+      }
+      const minStart = hmToMinutes(horaInicio);
+      const maxEnd = hmToMinutes(horaFin);
+      const curStart = hmToMinutes(existing.horaInicio);
+      const curEnd = hmToMinutes(existing.horaFin);
+      if (minStart != null && (curStart == null || minStart < curStart)) {
+        existing.horaInicio = horaInicio;
+      }
+      if (maxEnd != null && (curEnd == null || maxEnd > curEnd)) {
+        existing.horaFin = horaFin;
+      }
+    }
+
+    for (const row of secRows) {
+      const primaria = String(row.DocumentoPrimaria ?? '').trim();
+      const col = byDoc.get(primaria);
+      if (!col) continue;
+      col.secundarias.push({
+        id: Number(row.IdSecundaria ?? 0),
+        documento: String(row.DocumentoSecundaria ?? '').trim(),
+        nombre: String(row.NombreSecundaria ?? '').trim(),
+        horaInicio: String(row.HoraInicio ?? '').trim(),
+        horaFin: String(row.HoraFin ?? '').trim(),
+      });
+    }
+
+    return {
+      fecha,
+      primarias: [...byDoc.values()].sort((a, b) =>
+        a.nombre.localeCompare(b.nombre, 'es'),
+      ),
+    };
   }
 
   async crearCita(
@@ -328,12 +482,29 @@ export class AgendaService {
     const horaIniSql = horaSql(dto.horaInicio);
     const horaFinSql = horaSql(horaFin);
 
+    await this.resolverSecundaria(
+      profesional,
+      fecha,
+      dto.horaInicio,
+      horaFin,
+      dto.documentoEspacio,
+      docEmpresa,
+    );
     await this.assertHorarioLibre(
       profesional,
       desdeSql,
       hastaExclSql,
       horaIniSql,
       horaFinSql,
+    );
+    await this.assertEspacioLibre(
+      profesional,
+      fecha,
+      dto.horaInicio,
+      horaFin,
+      dto.documentoEspacio,
+      undefined,
+      docEmpresa,
     );
 
     const colDigitacion = '[Fecha Digitaci\u00f3n CompromisoVI]';
@@ -446,12 +617,21 @@ export class AgendaService {
       );
     }
     const idTipo = await this.resolveIdTipoCompromiso(dto.idTipoCompromiso);
+    const docEmpresa = await this.resolveDocumentoEmpresa(dto.documentoEmpresa);
     const docUsuario = String(user.documentoEntidad ?? '').trim();
     const desdeSql = ymdToSqlDateTime(fecha);
     const hastaExclSql = ymdExclusiveEndSql(fecha);
     const horaIniSql = horaSql(dto.horaInicio);
     const horaFinSql = horaSql(horaFin);
 
+    await this.resolverSecundaria(
+      profesional,
+      fecha,
+      dto.horaInicio,
+      horaFin,
+      dto.documentoEspacio,
+      docEmpresa,
+    );
     await this.assertHorarioLibre(
       profesional,
       desdeSql,
@@ -459,6 +639,15 @@ export class AgendaService {
       horaIniSql,
       horaFinSql,
       idCita,
+    );
+    await this.assertEspacioLibre(
+      profesional,
+      fecha,
+      dto.horaInicio,
+      horaFin,
+      dto.documentoEspacio,
+      idCita,
+      docEmpresa,
     );
 
     await this.dataSource.query(
@@ -474,7 +663,8 @@ export class AgendaService {
           [Id Tipo Compromiso] = @6,
           [Entidad Atendida] = @0,
           [Entidad Que Atendio] = @1,
-          [DocumentoCambioCita] = @8
+          [DocumentoCambioCita] = @8,
+          [Documento Empresa] = @9
       WHERE [Id CompromisoVI] = @7
       `,
       [
@@ -487,6 +677,7 @@ export class AgendaService {
         idTipo,
         idCita,
         docUsuario,
+        docEmpresa,
       ],
     );
 
@@ -543,6 +734,115 @@ export class AgendaService {
     }
   }
 
+  private async resolverSecundaria(
+    profesional: string,
+    fecha: string,
+    horaInicio: string,
+    horaFin: string,
+    documentoEspacioRaw?: string,
+    documentoEmpresaRaw?: string,
+  ): Promise<{ documentoPrimaria: string }> {
+    const desdeSql = ymdToSqlDateTime(fecha);
+    const hastaExclSql = ymdExclusiveEndSql(fecha);
+    const espacio = String(documentoEspacioRaw ?? '').trim();
+    const documentoEmpresa = String(documentoEmpresaRaw ?? '').trim();
+    const rows = await this.dataSource.query<
+      { DocumentoPrimaria: string }[]
+    >(
+      `
+      SELECT DISTINCT DocumentoPrimaria
+      FROM dbo.[Lite Cnsta AgendaSecundaria]
+      WHERE Fecha >= CONVERT(datetime, @0, 120)
+        AND Fecha < CONVERT(datetime, @1, 120)
+        AND LTRIM(RTRIM(DocumentoSecundaria)) = LTRIM(RTRIM(@2))
+        AND CONVERT(time, HoraInicio) <= CONVERT(time, @3)
+        AND CONVERT(time, HoraFin) >= CONVERT(time, @4)
+        AND (@5 = N'' OR LTRIM(RTRIM(DocumentoPrimaria)) = LTRIM(RTRIM(@5)))
+        AND (@6 = N'' OR LTRIM(RTRIM(ISNULL(DocumentoEmpresa, N''))) = LTRIM(RTRIM(@6)))
+      `,
+      [
+        desdeSql,
+        hastaExclSql,
+        profesional,
+        horaInicio,
+        horaFin,
+        espacio,
+        documentoEmpresa,
+      ],
+    );
+    if (!rows.length) {
+      throw new BadRequestException(
+        'No hay espacio programado a esa hora para el profesional',
+      );
+    }
+    const unicas = [
+      ...new Set(rows.map((r) => String(r.DocumentoPrimaria ?? '').trim())),
+    ].filter(Boolean);
+    if (unicas.length > 1) {
+      throw new BadRequestException(
+        'Indique documentoEspacio: hay más de un espacio a esa hora',
+      );
+    }
+    return { documentoPrimaria: unicas[0] };
+  }
+
+  private async assertEspacioLibre(
+    profesional: string,
+    fecha: string,
+    horaInicio: string,
+    horaFin: string,
+    documentoEspacioRaw?: string,
+    excludeId?: number,
+    documentoEmpresaRaw?: string,
+  ): Promise<void> {
+    const { documentoPrimaria } = await this.resolverSecundaria(
+      profesional,
+      fecha,
+      horaInicio,
+      horaFin,
+      documentoEspacioRaw,
+      documentoEmpresaRaw,
+    );
+    const desdeSql = ymdToSqlDateTime(fecha);
+    const hastaExclSql = ymdExclusiveEndSql(fecha);
+    const horaIniSql = horaSql(horaInicio);
+    const horaFinSql = horaSql(horaFin);
+    const choques = await this.dataSource.query<{ id: number }[]>(
+      `
+      SELECT TOP 1 vi.[Id CompromisoVI] AS id
+      FROM dbo.CompromisoVI AS vi
+      INNER JOIN dbo.[Lite Cnsta AgendaSecundaria] AS s
+        ON LTRIM(RTRIM(vi.[Entidad Responsable])) = LTRIM(RTRIM(s.DocumentoSecundaria))
+       AND s.Fecha >= CONVERT(datetime, @0, 120)
+       AND s.Fecha < CONVERT(datetime, @1, 120)
+       AND CONVERT(time, vi.[Hora Inicio CompromisoVI]) < CONVERT(time, s.HoraFin)
+       AND CONVERT(time, ISNULL(vi.[Hora Fin CompromisoVI], vi.[Hora Inicio CompromisoVI]))
+           > CONVERT(time, s.HoraInicio)
+      WHERE LTRIM(RTRIM(s.DocumentoPrimaria)) = LTRIM(RTRIM(@2))
+        AND vi.[Fecha Inicio CompromisoVI] >= CONVERT(datetime, @0, 120)
+        AND vi.[Fecha Inicio CompromisoVI] < CONVERT(datetime, @1, 120)
+        AND ISNULL(vi.[Id Estado], 0) NOT IN (${ESTADOS_CANCELADOS.join(', ')})
+        AND CONVERT(time, vi.[Hora Inicio CompromisoVI]) < CONVERT(time, @4)
+        AND CONVERT(time, ISNULL(vi.[Hora Fin CompromisoVI], vi.[Hora Inicio CompromisoVI]))
+            > CONVERT(time, @3)
+        AND (@5 IS NULL OR vi.[Id CompromisoVI] <> @5)
+      `,
+      [
+        desdeSql,
+        hastaExclSql,
+        documentoPrimaria,
+        horaIniSql,
+        horaFinSql,
+        excludeId ?? null,
+      ],
+    );
+    if (choques.length) {
+      throw new ConflictException(
+        'Ese horario ya está ocupado en el espacio',
+      );
+    }
+  }
+
   private async resolveProcedimientos(
     raw: string[] | undefined,
   ): Promise<AgendaProcedimientoDto[]> {
@@ -579,16 +879,11 @@ export class AgendaService {
   private async resolveDocumentoEmpresa(
     explicit: string | undefined,
   ): Promise<string> {
-    if (explicit?.trim()) {
-      return explicit.trim();
+    const doc = String(explicit ?? '').trim();
+    if (!doc) {
+      throw new BadRequestException('documentoEmpresa es obligatorio');
     }
-    const rows = await this.dataSource.query<{ DocumentoEmpresa: string }[]>(
-      `SELECT TOP 1 DocumentoEmpresa FROM dbo.[Lite Cnsta Empresa]`,
-    );
-    if (!rows.length) {
-      throw new NotFoundException('No hay empresa en catálogo');
-    }
-    return rows[0].DocumentoEmpresa;
+    return doc;
   }
 
   private async resolveIdTipoCompromiso(

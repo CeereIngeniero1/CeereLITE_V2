@@ -47,7 +47,13 @@ export class CreateAgendaCitaDto {
   @IsString({ each: true })
   codigosObjeto?: string[];
 
+  @IsString()
+  @MinLength(1)
+  documentoEmpresa!: string;
+
+  /** Entidad primaria (consultorio). Obligatorio si hay más de una a esa hora. */
   @IsOptional()
   @IsString()
-  documentoEmpresa?: string;
+  @MinLength(1)
+  documentoEspacio?: string;
 }

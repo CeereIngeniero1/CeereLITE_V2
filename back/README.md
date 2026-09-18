@@ -24,21 +24,23 @@ Al agregar una consulta: primero el `CREATE OR ALTER VIEW` en ese archivo, despu
 
 ## Agenda
 
-- `GET /api/v1/agenda/citas?fecha=yyyy-MM-dd` (JWT) — citas del día desde `dbo.CompromisoVI` vía `dbo.[Lite Cnsta AgendaCitas]`.
-- `GET /api/v1/agenda/profesionales` — catálogo función 17 (`dbo.[Lite Cnsta AgendaProfesional]`).
+- `GET /api/v1/agenda/citas?fecha=yyyy-MM-dd&documentoEmpresa=` (JWT) — citas del día desde `dbo.CompromisoVI` vía `dbo.[Lite Cnsta AgendaCitas]`. `NombreProfesional` = Observaciones Entidad, si vacío Nombre Completo. Incluye `TelefonoPaciente` (celular).
+- `GET /api/v1/agenda/espacios?fecha=yyyy-MM-dd&documentoEmpresa=` — programación del día de esa sede. Columnas = entidades primarias (`CompromisoIV`); franjas = secundarias enlazadas (`CompromisoV.[Documento Entidad Primaria]`). `Tipo Entidad` 1 = consultorio (función 26), 2 = profesional (función 17). Estado 7. Nombre = Observaciones Entidad, si vacío Nombre Completo.
+- `GET /api/v1/agenda/profesionales` — catálogo función 17 (`dbo.[Lite Cnsta AgendaProfesional]`). La grilla del día no usa este catálogo.
 - `GET /api/v1/agenda/tipos-compromiso` — tipos y color OLE (`dbo.[Lite Cnsta AgendaTipoCompromiso]`).
 - `GET /api/v1/agenda/procedimientos?q=` — TOP 40 de `dbo.Objeto` vía `dbo.[Lite Cnsta AgendaProcedimientos]`.
-- `POST /api/v1/agenda/citas` — alta en `CompromisoVI` y líneas en `CompromisoVII`. `horaInicio` y `horaFin` las envía el cliente (no hay default de 30 min). Si falta un fin válido y la suma de tiempos de procedimientos es > 0, se usa esa suma. 409 si el horario se cruza (no cuentan estados 60, 61, 64, 71). `idTipoCompromiso` y cada `codigosObjeto` deben existir en catálogo.
-- `PATCH /api/v1/agenda/citas/:id` — misma regla de horas; el choque no cuenta esta cita. Reemplaza las filas de `CompromisoVII`.
+- `GET /api/v1/agenda/pacientes?q=` — TOP 40 de `dbo.[Lite Cnsta ListaPaciente]` (nombre o documento). El modal de cita no usa `GET /users` (son ~35k filas).
+- `POST /api/v1/agenda/citas` — alta en `CompromisoVI` y líneas en `CompromisoVII`. `horaInicio` y `horaFin` las envía el cliente (no hay default de 30 min). Si falta un fin válido y la suma de tiempos de procedimientos es > 0, se usa esa suma. La cita debe caer en un `CompromisoV` de ese profesional (400 si no hay espacio; `documentoEspacio` si hay más de una primaria a esa hora). 409 si el horario se cruza para el profesional o en el mismo espacio (no cuentan estados 60, 61, 64, 71). `idTipoCompromiso` y cada `codigosObjeto` deben existir en catálogo.
+- `PATCH /api/v1/agenda/citas/:id` — misma regla de horas y de espacio; el choque no cuenta esta cita. Reemplaza las filas de `CompromisoVII`.
 
 SELECT del día:
 
 ```sql
 SELECT IdCita, Fecha, HoraInicio, Hora, HoraFin, IdEstado,
        IdTipoCompromiso, TipoCompromiso, ColorTipo,
-       DocumentoPaciente, NombrePaciente,
+       DocumentoPaciente, NombrePaciente, TelefonoPaciente,
        DocumentoProfesional, NombreProfesional,
-       Motivo, Estado
+       Motivo, Estado, DocumentoEmpresa
 FROM dbo.[Lite Cnsta AgendaCitas]
 WHERE Fecha >= CONVERT(datetime, @0, 120)
   AND Fecha < CONVERT(datetime, @1, 120)

@@ -3,10 +3,11 @@ import { useNavigate, Link } from 'react-router-dom';
 import {
   createAgendaCita,
   fetchAgendaCitas,
+  fetchAgendaEspacios,
+  fetchAgendaPacientes,
   fetchAgendaProcedimientos,
   fetchAgendaTiposCompromiso,
   fetchPacienteDatos,
-  fetchUsers,
   messageFromAxiosError,
   updateAgendaCita,
 } from '../api/client';
@@ -16,6 +17,7 @@ import { useCompany } from '../auth/CompanyContext';
 const ESTADOS_CANCELADOS = new Set([60, 61, 64, 71]);
 const SLOT_INICIO = 6 * 60;
 const SLOT_PASO = 5;
+const CELDA_MIN = 30;
 const GRID_FIN = 22 * 60;
 const GRID_MINUTOS = GRID_FIN - SLOT_INICIO;
 const SLOT_PX = 20;
@@ -93,9 +95,7 @@ function formatFechaCorta(iso) {
 
 function buildHourLabels() {
   const labels = [];
-  const startHour = Math.ceil(SLOT_INICIO / 60);
-  for (let h = startHour; h * 60 <= GRID_FIN; h += 1) {
-    const min = h * 60;
+  for (let min = SLOT_INICIO; min <= GRID_FIN; min += CELDA_MIN) {
     labels.push({
       hm: minutesToHm(min),
       top: ((min - SLOT_INICIO) / SLOT_PASO) * SLOT_PX,
@@ -141,11 +141,57 @@ function isCancelada(cita) {
   return ESTADOS_CANCELADOS.has(Number(cita?.idEstado));
 }
 
-function citasDeProfesional(citas, documento) {
-  const doc = String(documento ?? '').trim();
-  return citas.filter(
-    (c) => (String(c.documentoProfesional ?? '').trim() || '—') === doc,
-  );
+function citasDeColumna(citas, col) {
+  const secs = col?.secundarias ?? [];
+  return citas.filter((cita) => {
+    if (isCancelada(cita)) return false;
+    const cr = citaRango(cita);
+    if (!cr) return false;
+    const doc = String(cita.documentoProfesional ?? '').trim();
+    return secs.some((s) => {
+      if (String(s.documento ?? '').trim() !== doc) return false;
+      const sr = rangoDeHoras(s.horaInicio, s.horaFin);
+      return sr && rangosSolapan(cr, sr);
+    });
+  });
+}
+
+function rangoDeHoras(horaInicio, horaFin) {
+  const start = hmToMinutes(horaInicio);
+  if (start == null) return null;
+  let end = hmToMinutes(horaFin);
+  if (end == null || end <= start) end = start + SLOT_PASO;
+  return { start, end };
+}
+
+function rangosSolapan(a, b) {
+  return a.start < b.end && b.start < a.end;
+}
+
+function celdasDeSecundaria(sec) {
+  const r = rangoDeHoras(sec.horaInicio, sec.horaFin);
+  if (!r) return [];
+  const cells = [];
+  for (let t = SLOT_INICIO; t < GRID_FIN; t += CELDA_MIN) {
+    const cell = { start: t, end: t + CELDA_MIN };
+    if (!rangosSolapan(cell, r)) continue;
+    cells.push({
+      start: t,
+      end: t + CELDA_MIN,
+      nombre: sec.nombre || sec.documento,
+      documento: sec.documento,
+      id: sec.id,
+    });
+  }
+  return cells;
+}
+
+function celdaSolapaCitas(celda, citasCol) {
+  const cr = { start: celda.start, end: celda.end };
+  return citasCol.some((c) => {
+    const r = citaRango(c);
+    return r && rangosSolapan(cr, r);
+  });
 }
 
 function oleToRgb(n) {
@@ -373,6 +419,8 @@ function NuevaCitaModal({
   fecha,
   horaInicio,
   profesional,
+  documentoEspacio,
+  nombreEspacio,
   documentoEmpresa,
   nombreSede,
   tipos,
@@ -391,7 +439,10 @@ function NuevaCitaModal({
     () => (citaInicial?.horaFin || '').slice(0, 5),
   );
   const [pacientes, setPacientes] = useState([]);
-  const [busqueda, setBusqueda] = useState('');
+  const [busqueda, setBusqueda] = useState(
+    () => String(citaInicial?.documentoPaciente || '').trim(),
+  );
+  const [loadingPacientes, setLoadingPacientes] = useState(true);
   const [documentoPaciente, setDocumentoPaciente] = useState(
     () => citaInicial?.documentoPaciente || '',
   );
@@ -422,18 +473,24 @@ function NuevaCitaModal({
 
   useEffect(() => {
     let cancel = false;
-    (async () => {
-      try {
-        const rows = await fetchUsers();
-        if (!cancel) setPacientes(Array.isArray(rows) ? rows : []);
-      } catch {
-        if (!cancel) setPacientes([]);
-      }
-    })();
+    const t = setTimeout(() => {
+      (async () => {
+        setLoadingPacientes(true);
+        try {
+          const rows = await fetchAgendaPacientes(busqueda.trim());
+          if (!cancel) setPacientes(Array.isArray(rows) ? rows : []);
+        } catch {
+          if (!cancel) setPacientes([]);
+        } finally {
+          if (!cancel) setLoadingPacientes(false);
+        }
+      })();
+    }, 250);
     return () => {
       cancel = true;
+      clearTimeout(t);
     };
-  }, []);
+  }, [busqueda]);
 
   useEffect(() => {
     let cancel = false;
@@ -483,19 +540,6 @@ function NuevaCitaModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, saving, editPaciente]);
 
-  const filtrados = useMemo(() => {
-    const q = busqueda.trim().toLowerCase();
-    if (!q) return pacientes.slice(0, 40);
-    return pacientes
-      .filter((p) => {
-        const name = (p.name ?? '').toLowerCase();
-        const id = (p.id ?? '').toLowerCase();
-        const id2 = (p.id2 ?? '').toLowerCase();
-        return name.includes(q) || id.includes(q) || id2.includes(q);
-      })
-      .slice(0, 40);
-  }, [pacientes, busqueda]);
-
   const seleccionado = pacientes.find((p) => p.id === documentoPaciente);
   const tipoSel = tipos.find((t) => t.idTipoCompromiso === Number(idTipo));
 
@@ -533,6 +577,14 @@ function NuevaCitaModal({
       setError('Seleccione un paciente.');
       return;
     }
+    if (!String(profesional?.documento ?? '').trim()) {
+      setError('No hay profesional para esta franja.');
+      return;
+    }
+    if (!String(documentoEmpresa ?? '').trim()) {
+      setError('Seleccione la empresa de trabajo.');
+      return;
+    }
     const motivoFinal =
       motivo.trim() ||
       seleccionados.map((p) => p.descripcion || p.codigo).join(', ');
@@ -558,14 +610,15 @@ function NuevaCitaModal({
     try {
       const payload = {
         documentoPaciente,
-        documentoProfesional: profesional.documento,
+        documentoProfesional: String(profesional.documento).trim(),
         fecha: fechaCita,
         horaInicio,
         horaFin: horaFinEnvio,
         motivo: motivoFinal,
         idTipoCompromiso: Number(idTipo),
         codigosObjeto: seleccionados.map((p) => p.codigo),
-        documentoEmpresa: documentoEmpresa || undefined,
+        documentoEmpresa,
+        documentoEspacio: documentoEspacio || undefined,
       };
       if (esEdicion) {
         await updateAgendaCita(citaInicial.idCita, payload);
@@ -601,7 +654,8 @@ function NuevaCitaModal({
               {esEdicion ? 'Editar cita' : 'Nueva cita'}
             </h2>
             <p className="muted" style={{ margin: '0.25rem 0 0' }}>
-              {profesional.nombre}
+              {profesional?.nombre || ''}
+              {nombreEspacio ? ` · ${nombreEspacio}` : ''}
               {` · ${fechaCita} · ${horaCita}–${horaFin}`}
             </p>
           </div>
@@ -703,23 +757,29 @@ function NuevaCitaModal({
                 />
               </label>
               <div className="agenda-paciente-list">
-                {filtrados.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className={
-                      documentoPaciente === p.id
-                        ? 'agenda-paciente-item is-selected'
-                        : 'agenda-paciente-item'
-                    }
-                    onClick={() => setDocumentoPaciente(p.id)}
-                  >
-                    <span>{p.name || p.id}</span>
-                    <span className="muted td-mono">{p.id2 || p.id}</span>
-                  </button>
-                ))}
-                {!filtrados.length && (
-                  <p className="muted">No hay pacientes para esa búsqueda.</p>
+                {loadingPacientes ? (
+                  <p className="muted">Cargando pacientes…</p>
+                ) : (
+                  <>
+                    {pacientes.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={
+                          documentoPaciente === p.id
+                            ? 'agenda-paciente-item is-selected'
+                            : 'agenda-paciente-item'
+                        }
+                        onClick={() => setDocumentoPaciente(p.id)}
+                      >
+                        <span>{p.name || p.id}</span>
+                        <span className="muted td-mono">{p.id2 || p.id}</span>
+                      </button>
+                    ))}
+                    {!pacientes.length && (
+                      <p className="muted">No hay pacientes para esa búsqueda.</p>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -727,7 +787,7 @@ function NuevaCitaModal({
               datos={datosPaciente}
               loading={loadingFicha}
               sede={nombreSede}
-              profesionalNombre={profesional.nombre}
+              profesionalNombre={profesional?.nombre || ''}
               onActualizar={() => {
                 if (documentoPaciente) setEditPaciente(true);
               }}
@@ -876,8 +936,9 @@ export default function AgendaPage() {
   const { documentoEmpresa, nombreComercialEmpresa } = useCompany();
   const [fecha, setFecha] = useState(() => ymdLocal(new Date()));
   const [citas, setCitas] = useState([]);
+  const [primarias, setPrimarias] = useState([]);
   const [tipos, setTipos] = useState([]);
-  const [filtroProf, setFiltroProf] = useState('');
+  const [filtroCol, setFiltroCol] = useState('');
   const [loading, setLoading] = useState(true);
   const [catalogReady, setCatalogReady] = useState(false);
   const [error, setError] = useState('');
@@ -892,19 +953,27 @@ export default function AgendaPage() {
 
   const esHoy = fecha === ymdLocal(new Date());
 
-  async function loadCitas(opts = {}) {
+  async function loadDia(opts = {}) {
     if (!documentoEmpresa) {
       setCitas([]);
+      setPrimarias([]);
       if (!opts.silent) setLoading(false);
       return;
     }
     if (!opts.silent) setLoading(true);
     setError('');
     try {
-      const data = await fetchAgendaCitas(fecha, documentoEmpresa);
-      setCitas(Array.isArray(data?.citas) ? data.citas : []);
+      const [citasData, espaciosData] = await Promise.all([
+        fetchAgendaCitas(fecha, documentoEmpresa),
+        fetchAgendaEspacios(fecha, documentoEmpresa),
+      ]);
+      setCitas(Array.isArray(citasData?.citas) ? citasData.citas : []);
+      setPrimarias(
+        Array.isArray(espaciosData?.primarias) ? espaciosData.primarias : [],
+      );
     } catch (e) {
       setCitas([]);
+      setPrimarias([]);
       setError(await messageFromAxiosError(e, 'No se pudieron cargar las citas'));
     } finally {
       if (!opts.silent) setLoading(false);
@@ -930,7 +999,7 @@ export default function AgendaPage() {
   }, []);
 
   useEffect(() => {
-    void loadCitas();
+    void loadDia();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- recargar al cambiar fecha o sede
   }, [fecha, documentoEmpresa]);
 
@@ -945,59 +1014,37 @@ export default function AgendaPage() {
     return () => clearInterval(id);
   }, [esHoy]);
 
-  const profesionalesDelDia = useMemo(() => {
-    const byDoc = new Map();
-    for (const c of citas) {
-      const documento = String(c.documentoProfesional ?? '').trim() || '—';
-      if (!byDoc.has(documento)) {
-        byDoc.set(documento, {
-          documento,
-          nombre: c.nombreProfesional || documento,
-        });
-      }
+  const columnas = useMemo(() => {
+    if (filtroCol) {
+      return primarias.filter((c) => c.documento === filtroCol);
     }
-    return [...byDoc.values()].sort((a, b) =>
-      a.nombre.localeCompare(b.nombre, 'es'),
-    );
-  }, [citas]);
+    return primarias;
+  }, [primarias, filtroCol]);
 
   useEffect(() => {
-    if (
-      filtroProf &&
-      !profesionalesDelDia.some((p) => p.documento === filtroProf)
-    ) {
-      setFiltroProf('');
+    if (filtroCol && !primarias.some((p) => p.documento === filtroCol)) {
+      setFiltroCol('');
     }
-  }, [profesionalesDelDia, filtroProf]);
-
-  const columnas = useMemo(() => {
-    if (filtroProf) {
-      return profesionalesDelDia.filter((c) => c.documento === filtroProf);
-    }
-    return profesionalesDelDia;
-  }, [profesionalesDelDia, filtroProf]);
+  }, [primarias, filtroCol]);
 
   const nowTop =
     esHoy && nowMin >= SLOT_INICIO && nowMin <= GRID_FIN
       ? ((nowMin - SLOT_INICIO) / SLOT_PASO) * SLOT_PX
       : null;
 
-  function abrirNuevaCita(col, clientY, columnEl) {
-    const rect = columnEl.getBoundingClientRect();
-    const y = clientY - rect.top;
-    const slotsFromTop = Math.floor(y / SLOT_PX);
-    const minutes = SLOT_INICIO + slotsFromTop * SLOT_PASO;
-    if (minutes < SLOT_INICIO || minutes >= GRID_FIN) return;
+  function abrirNuevaCita(col, celda) {
     setModal({
-      horaInicio: minutesToHm(minutes),
+      horaInicio: minutesToHm(celda.start),
       profesional: {
-        documento: col.documento,
-        nombre: col.nombre,
+        documento: celda.documento,
+        nombre: celda.nombre,
       },
+      documentoEspacio: col.documento,
+      nombreEspacio: col.nombre,
     });
   }
 
-  function modalDesdeCita(cita) {
+  function modalDesdeCita(cita, col) {
     return {
       cita: { ...cita, fecha },
       profesional: {
@@ -1005,6 +1052,8 @@ export default function AgendaPage() {
         nombre: cita.nombreProfesional || cita.documentoProfesional,
       },
       horaInicio: cita.hora,
+      documentoEspacio: col?.documento || '',
+      nombreEspacio: col?.nombre || '',
     };
   }
 
@@ -1087,12 +1136,12 @@ export default function AgendaPage() {
           />
           <select
             className="agenda-view-select"
-            value={filtroProf}
-            onChange={(e) => setFiltroProf(e.target.value)}
-            aria-label="Profesional"
+            value={filtroCol}
+            onChange={(e) => setFiltroCol(e.target.value)}
+            aria-label="Espacio"
           >
             <option value="">Todos</option>
-            {profesionalesDelDia.map((p) => (
+            {primarias.map((p) => (
               <option key={p.documento} value={p.documento}>
                 {p.nombre}
               </option>
@@ -1104,10 +1153,10 @@ export default function AgendaPage() {
       {error && <div className="alert alert-error">{error}</div>}
 
       {loading || !catalogReady ? (
-        <p className="muted agenda-loading">Cargando citas…</p>
+        <p className="muted agenda-loading">Cargando agenda…</p>
       ) : columnas.length === 0 ? (
         <p className="muted agenda-loading">
-          No hay citas este día para la empresa seleccionada.
+          No hay espacios programados este día.
         </p>
       ) : (
         <div className="agenda-cal-wrap">
@@ -1151,19 +1200,18 @@ export default function AgendaPage() {
                 </div>
               </div>
               {columnas.map((col) => {
-                const delDia = citasDeProfesional(citas, col.documento).filter(
-                  (c) => !isCancelada(c),
-                );
+                const delDia = citasDeColumna(citas, col);
                 const laid = layoutCitas(delDia);
+                const celdas = (col.secundarias ?? []).flatMap((sec) =>
+                  celdasDeSecundaria(sec).filter(
+                    (celda) => !celdaSolapaCitas(celda, delDia),
+                  ),
+                );
                 return (
                   <div
                     key={col.documento}
                     className="agenda-pro-col"
                     style={{ height: GRID_HEIGHT }}
-                    onClick={(e) => {
-                      if (e.target !== e.currentTarget) return;
-                      abrirNuevaCita(col, e.clientY, e.currentTarget);
-                    }}
                   >
                     {GRID_MARKS.map((m) => (
                       <div
@@ -1176,6 +1224,20 @@ export default function AgendaPage() {
                         style={{ top: m.top }}
                       />
                     ))}
+                    {celdas.map((celda) => (
+                      <button
+                        key={`${celda.id}-${celda.start}`}
+                        type="button"
+                        className="agenda-secundaria-celda"
+                        style={{
+                          top: ((celda.start - SLOT_INICIO) / SLOT_PASO) * SLOT_PX,
+                          height: (CELDA_MIN / SLOT_PASO) * SLOT_PX,
+                        }}
+                        onClick={() => abrirNuevaCita(col, celda)}
+                      >
+                        {celda.nombre}
+                      </button>
+                    ))}
                     {nowTop != null ? (
                       <div className="agenda-now-line" style={{ top: nowTop }} />
                     ) : null}
@@ -1183,7 +1245,6 @@ export default function AgendaPage() {
                       const geo = blockGeometryPx(cita);
                       if (!geo) return null;
                       const color = oleToCss(cita.colorTipo) || 'var(--brand)';
-                      const gap = 4;
                       return (
                         <div
                           key={cita.idCita}
@@ -1192,13 +1253,12 @@ export default function AgendaPage() {
                           tabIndex={0}
                           style={{
                             top: geo.top,
-                            height: Math.max(geo.height, 16),
-                            width: `calc(${100 / total}% - ${gap}px)`,
-                            left: `calc(${index * (100 / total)}% + ${gap / 2}px)`,
-                            background:
-                              oleSoftCss(cita.colorTipo) || 'var(--brand-soft)',
+                            height: Math.max(geo.height, 48),
+                            width: `${100 / total}%`,
+                            left: `${index * (100 / total)}%`,
+                            background: color,
                             borderLeftColor: color,
-                            color,
+                            color: '#111',
                           }}
                           onMouseEnter={(e) =>
                             showResumen(cita, e.currentTarget)
@@ -1207,25 +1267,22 @@ export default function AgendaPage() {
                           onClick={(e) => {
                             e.stopPropagation();
                             setResumen(null);
-                            setModal(modalDesdeCita(cita));
+                            setModal(modalDesdeCita(cita, col));
                           }}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.key === ' ') {
                               e.preventDefault();
                               e.stopPropagation();
-                              setModal(modalDesdeCita(cita));
+                              setModal(modalDesdeCita(cita, col));
                             }
                           }}
                         >
-                          <div className="agenda-cita-time">
-                            {cita.hora}
-                            {cita.horaFin ? ` – ${cita.horaFin}` : ''}
-                          </div>
                           <div className="agenda-cita-patient">
                             {cita.nombrePaciente || 'Paciente'}
                           </div>
-                          <div className="agenda-cita-type">
-                            {cita.tipoCompromiso || cita.motivo || ''}
+                          <div className="agenda-cita-time">
+                            {cita.hora}
+                            {cita.horaFin ? ` – ${cita.horaFin}` : ''}
                           </div>
                         </div>
                       );
@@ -1255,7 +1312,10 @@ export default function AgendaPage() {
           }}
           onEditarCita={(cita) => {
             setResumen(null);
-            setModal(modalDesdeCita(cita));
+            const col = columnas.find(
+              (c) => citasDeColumna([cita], c).length > 0,
+            );
+            setModal(modalDesdeCita(cita, col));
           }}
           onEditarPaciente={(cita) => {
             setResumen(null);
@@ -1272,6 +1332,8 @@ export default function AgendaPage() {
           fecha={fecha}
           horaInicio={modal.horaInicio || modal.cita?.hora || '06:00'}
           profesional={modal.profesional}
+          documentoEspacio={modal.documentoEspacio}
+          nombreEspacio={modal.nombreEspacio}
           documentoEmpresa={documentoEmpresa}
           nombreSede={nombreComercialEmpresa}
           tipos={tipos}
@@ -1282,7 +1344,7 @@ export default function AgendaPage() {
             if (ymd && ymd !== fecha) {
               setFecha(ymd);
             } else {
-              void loadCitas({ silent: true });
+              void loadDia({ silent: true });
             }
           }}
         />

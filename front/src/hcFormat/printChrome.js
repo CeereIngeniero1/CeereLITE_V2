@@ -1,3 +1,5 @@
+import { freezeHcFormatForPrint } from './hcFormat';
+
 export const CEERE_PRINT_FOOTER_TEXT = 'Impreso por CeereSio';
 
 export function printFooterCss() {
@@ -22,6 +24,58 @@ export function printFooterCss() {
 
 export function printFooterHtml() {
   return `<div class="ceere-print-footer">${CEERE_PRINT_FOOTER_TEXT}</div>`;
+}
+
+/** CSS para que los campos con scroll impriman todo el texto (espejo de textarea). */
+export function printExpandCss() {
+  return `
+.print-mirror {
+  display: none;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow: visible !important;
+  height: auto !important;
+  max-height: none !important;
+  box-sizing: border-box;
+}
+@media print {
+  html, body {
+    height: auto !important;
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  textarea {
+    display: none !important;
+  }
+  .print-mirror {
+    display: block !important;
+  }
+  [data-print-expand] {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+}
+`;
+}
+
+/** Congela valores, espejos y CSS de expansión; devuelve cleanup para el editor en vivo. */
+export function prepareHcDocumentForPrint(doc) {
+  if (!doc?.body) return () => {};
+  freezeHcFormatForPrint(doc);
+  const style = doc.createElement('style');
+  style.setAttribute('data-hc-print-expand', '1');
+  style.textContent = printExpandCss();
+  (doc.head || doc.documentElement).appendChild(style);
+  return () => {
+    style.remove();
+    for (const mirror of [...doc.querySelectorAll('.print-mirror')]) {
+      mirror.remove();
+    }
+    for (const el of [...doc.querySelectorAll('[data-print-expand]')]) {
+      el.removeAttribute('data-print-expand');
+    }
+  };
 }
 
 /** Inyecta pie de impresión; devuelve función para quitarlo (formatos abiertos). */

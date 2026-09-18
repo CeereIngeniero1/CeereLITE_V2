@@ -8,10 +8,11 @@ const ESTADOS_CANCELADOS = new Set([60, 61, 64, 71]);
 const SORT_COLS = [
   { key: 'profesional', label: 'Profesional' },
   { key: 'paciente', label: 'Paciente' },
-  { key: 'hora', label: 'Hora' },
+  { key: 'telefono', label: 'Teléfono' },
+  { key: 'hora', label: 'Hora inicio' },
   { key: 'estado', label: 'Estado' },
-  { key: 'motivo', label: 'Motivo' },
-  { key: 'tipo', label: 'Tipo' },
+  { key: 'motivo', label: 'Descripción' },
+  { key: 'tipo', label: 'Tipo de compromiso' },
 ];
 
 function ymdLocal(d) {
@@ -124,6 +125,7 @@ export default function ProgramacionesPage() {
       const va = {
         profesional: String(a.nombreProfesional ?? ''),
         paciente: String(a.nombrePaciente ?? ''),
+        telefono: String(a.telefonoPaciente ?? ''),
         hora: hmToMinutes(a.hora),
         estado: String(a.estado ?? ''),
         motivo: String(a.motivo ?? ''),
@@ -132,6 +134,7 @@ export default function ProgramacionesPage() {
       const vb = {
         profesional: String(b.nombreProfesional ?? ''),
         paciente: String(b.nombrePaciente ?? ''),
+        telefono: String(b.telefonoPaciente ?? ''),
         hora: hmToMinutes(b.hora),
         estado: String(b.estado ?? ''),
         motivo: String(b.motivo ?? ''),
@@ -292,6 +295,7 @@ export default function ProgramacionesPage() {
                             </td>
                           ) : null}
                           <td>{cita.nombrePaciente || '—'}</td>
+                          <td>{cita.telefonoPaciente || '—'}</td>
                           <td>{formatHora12(cita.hora)}</td>
                           <td>{cita.estado || '—'}</td>
                           <td>{cita.motivo || '—'}</td>
@@ -318,6 +322,7 @@ export default function ProgramacionesPage() {
                       >
                         <td>{cita.nombreProfesional || '—'}</td>
                         <td>{cita.nombrePaciente || '—'}</td>
+                        <td>{cita.telefonoPaciente || '—'}</td>
                         <td>{formatHora12(cita.hora)}</td>
                         <td>{cita.estado || '—'}</td>
                         <td>{cita.motivo || '—'}</td>

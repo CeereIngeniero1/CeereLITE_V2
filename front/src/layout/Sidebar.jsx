@@ -1,17 +1,20 @@
 import { useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useCompany } from '../auth/CompanyContext';
 import { useTheme } from '../theme/ThemeContext';
 import { BrandLockup } from '../components/BrandLogo';
 import { UserProfileModal } from '../components/UserProfileModal';
 
-const moduleLinks = [
+const linksBeforeAgenda = [
   { to: '/principal/home', label: 'Inicio', icon: '⌂' },
-  { to: '/principal/agenda', label: 'Agenda', icon: '▦' },
-  { to: '/principal/programaciones', label: 'Programaciones', icon: '☰' },
+];
+
+const linksAfterAgenda = [
   { to: '/principal/usuarios', label: 'Usuarios', icon: '👥' },
-  { to: '/principal/evolucion', label: 'Historias clínicas', icon: '⚕' },
+];
+
+const linksAfterHc = [
   { to: '/principal/empresa', label: 'Empresa', icon: '🏛' },
 ];
 
@@ -33,21 +36,48 @@ function shortLoggedName(user) {
 
 export function Sidebar() {
   const [open, setOpen] = useState(true);
+  const [agendaOpen, setAgendaOpen] = useState(false);
   const [facturaOpen, setFacturaOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const { user, logout } = useAuth();
   const { nombreComercialEmpresa } = useCompany();
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const agendaActive =
+    location.pathname.startsWith('/principal/agenda') ||
+    location.pathname.startsWith('/principal/programaciones');
+  const hcActive = location.pathname.startsWith('/principal/evolucion');
 
   function toggleSidebar() {
     setOpen((v) => {
       const next = !v;
       if (!next) {
+        setAgendaOpen(false);
         setFacturaOpen(false);
       }
       return next;
     });
+  }
+
+  function ModuleLinks({ links }) {
+    return links.map(({ to, label, icon }) => (
+      <NavLink
+        key={to}
+        to={to}
+        className={({ isActive }) =>
+          `sidebar-link ${isActive ? 'active' : ''}`
+        }
+        end={to === '/principal/home'}
+        title={label}
+      >
+        <span className="sidebar-link-icon" aria-hidden>
+          {icon}
+        </span>
+        {open && <span>{label}</span>}
+      </NavLink>
+    ));
   }
 
   const displayName = shortLoggedName(user);
@@ -69,22 +99,60 @@ export function Sidebar() {
 
       <nav className="sidebar-nav">
         {open && <p className="sidebar-section-label">Módulos</p>}
-        {moduleLinks.map(({ to, label, icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            className={({ isActive }) =>
-              `sidebar-link ${isActive ? 'active' : ''}`
-            }
-            end={to === '/principal/home'}
-            title={label}
+        <ModuleLinks links={linksBeforeAgenda} />
+
+        <div className="sidebar-submenu-wrap">
+          <button
+            type="button"
+            className={`sidebar-link sidebar-submenu-head ${agendaActive || agendaOpen ? 'active' : ''}`}
+            onClick={() => setAgendaOpen((v) => !v)}
+            title="Agenda"
           >
-            <span className="sidebar-link-icon" aria-hidden>
-              {icon}
-            </span>
-            {open && <span>{label}</span>}
-          </NavLink>
-        ))}
+            <span className="sidebar-link-icon">▦</span>
+            {open && <span>Agenda</span>}
+            {open && <span className="chevron">{agendaOpen ? '▾' : '▸'}</span>}
+          </button>
+          {open && agendaOpen && (
+            <div className="sidebar-submenu">
+              <NavLink
+                to="/principal/agenda"
+                className={({ isActive }) =>
+                  `sidebar-sublink${isActive ? ' active' : ''}`
+                }
+              >
+                Agenda
+              </NavLink>
+              <NavLink
+                to="/principal/programaciones"
+                className={({ isActive }) =>
+                  `sidebar-sublink${isActive ? ' active' : ''}`
+                }
+              >
+                Programaciones
+              </NavLink>
+            </div>
+          )}
+        </div>
+
+        <ModuleLinks links={linksAfterAgenda} />
+
+        <button
+          type="button"
+          className={`sidebar-link ${hcActive ? 'active' : ''}`}
+          onClick={() =>
+            navigate('/principal/evolucion', {
+              state: { buscarPaciente: true },
+            })
+          }
+          title="Historias clínicas"
+        >
+          <span className="sidebar-link-icon" aria-hidden>
+            ⚕
+          </span>
+          {open && <span>Historias clínicas</span>}
+        </button>
+
+        <ModuleLinks links={linksAfterHc} />
 
         <div className="sidebar-submenu-wrap">
           <button

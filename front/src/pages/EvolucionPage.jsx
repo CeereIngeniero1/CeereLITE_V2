@@ -10,6 +10,7 @@ import {
   fetchNotaAclaratoria,
   fetchPacienteDatos,
   fetchParentescoCatalog,
+  messageFromAxiosError,
   patchCerrarEvolucion,
   patchEvolucionDiagnosticos,
 } from '../api/client';
@@ -20,6 +21,7 @@ import { HcAnexosModal } from '../components/HcAnexosModal';
 import { HcFormatEditor } from '../components/HcFormatEditor';
 import { HcHistorialPrintModal } from '../components/HcHistorialPrintModal';
 import { HcObservacionesModal } from '../components/HcObservacionesModal';
+import { PacienteHcModal } from '../components/PacienteHcModal';
 import { PatientDataPanel } from '../components/PatientDataPanel';
 import { SavingOverlay } from '../components/SavingOverlay';
 import {
@@ -33,7 +35,7 @@ import {
 } from '../hcFormat/hcFormat';
 import { printHtmlDocument } from '../hcFormat/printDocument';
 import { printFooterCss, printFooterHtml } from '../hcFormat/printChrome';
-import { API_ORIGIN } from '../config';
+import { API_ORIGIN, getStoredHcDocumento, setStoredHcDocumento } from '../config';
 
 function pickDiagFromRow(row) {
   if (!row) return { general: '', especifico: '' };
@@ -226,7 +228,8 @@ export default function EvolucionPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { documentoEmpresa, nombreComercialEmpresa } = useCompany();
-  const documentoPaciente = location.state?.documentoPaciente;
+  const stateDoc = String(location.state?.documentoPaciente ?? '').trim();
+  const documentoPaciente = stateDoc || getStoredHcDocumento();
   const formatRef = useRef(null);
 
   const [pacienteDatos, setPacienteDatos] = useState(null);
@@ -264,6 +267,14 @@ export default function EvolucionPage() {
   const [savingLabel, setSavingLabel] = useState('Guardando…');
   const [error, setError] = useState('');
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(
+    () =>
+      Boolean(location.state?.buscarPaciente) ||
+      !(
+        String(location.state?.documentoPaciente ?? '').trim() ||
+        getStoredHcDocumento()
+      ),
+  );
   const [moreOpen, setMoreOpen] = useState(false);
   const [listModal, setListModal] = useState(null);
   const [hcView, setHcView] = useState('evolucion');
@@ -271,7 +282,15 @@ export default function EvolucionPage() {
 
   const demografia = pacienteDatos?.demografia ?? null;
   const evolucionSnapshot = pacienteDatos?.evolucionSnapshot ?? null;
-  const hasPaciente = !!demografia;
+  const hasPaciente = Boolean(
+    demografia &&
+      (String(demografia.nombreCompleto ?? '').trim() ||
+        String(demografia.primerNombre ?? '').trim()),
+  );
+
+  useEffect(() => {
+    if (stateDoc) setStoredHcDocumento(stateDoc);
+  }, [stateDoc]);
 
   const reloadPacienteDatos = useCallback(async () => {
     if (!documentoPaciente) return;
@@ -281,12 +300,18 @@ export default function EvolucionPage() {
 
   const reloadLista = useCallback(async () => {
     if (!documentoPaciente) return;
-    const ev = await fetchEvolucionesPaciente(documentoPaciente);
-    setLista(Array.isArray(ev) ? ev : []);
+    try {
+      const ev = await fetchEvolucionesPaciente(documentoPaciente);
+      setLista(Array.isArray(ev) ? ev : []);
+    } catch {
+      setLista([]);
+    }
   }, [documentoPaciente]);
 
   useEffect(() => {
     if (!documentoPaciente) {
+      setPacienteDatos(null);
+      setLista([]);
       setLoading(false);
       return;
     }
@@ -294,30 +319,54 @@ export default function EvolucionPage() {
     setLoading(true);
     setError('');
     (async () => {
-      try {
-        const datos = await fetchPacienteDatos(documentoPaciente);
-        if (cancel) return;
-        setPacienteDatos(datos);
-        const ev = await fetchEvolucionesPaciente(documentoPaciente);
-        if (cancel) return;
-        setLista(Array.isArray(ev) ? ev : []);
-      } catch (e) {
-        if (!cancel) {
-          setError(
-            e.response?.data?.message ??
-              e.response?.data?.error ??
-              e.message ??
-              'Error al cargar datos',
-          );
-        }
-      } finally {
-        if (!cancel) setLoading(false);
+      const [datosR, listaR] = await Promise.allSettled([
+        fetchPacienteDatos(documentoPaciente),
+        fetchEvolucionesPaciente(documentoPaciente),
+      ]);
+      if (cancel) return;
+      const parts = [];
+      if (datosR.status === 'fulfilled') {
+        setPacienteDatos(datosR.value ?? null);
+      } else {
+        setPacienteDatos(null);
+        parts.push(
+          await messageFromAxiosError(
+            datosR.reason,
+            'No se pudieron cargar los datos del paciente',
+          ),
+        );
       }
+      if (listaR.status === 'fulfilled') {
+        setLista(Array.isArray(listaR.value) ? listaR.value : []);
+      } else {
+        setLista([]);
+        parts.push(
+          await messageFromAxiosError(
+            listaR.reason,
+            'No se pudieron cargar las evoluciones',
+          ),
+        );
+      }
+      setError(parts.join(' '));
+      setLoading(false);
     })();
     return () => {
       cancel = true;
     };
   }, [documentoPaciente]);
+
+  useEffect(() => {
+    if (
+      location.state?.buscarPaciente &&
+      !String(location.state?.documentoPaciente ?? '').trim()
+    ) {
+      setPickerOpen(true);
+    }
+  }, [location.key, location.state?.buscarPaciente, location.state?.documentoPaciente]);
+
+  function closePacientePicker() {
+    setPickerOpen(false);
+  }
 
   useEffect(() => {
     if (!moreOpen) return;
@@ -994,10 +1043,21 @@ export default function EvolucionPage() {
       <SavingOverlay show={saving} label={savingLabel} />
 
       {!documentoPaciente && (
-        <p className="muted">
-          Abrí un paciente desde{' '}
-          <Link to="/principal/usuarios">Usuarios</Link> con «Evolucionar».
-        </p>
+        <div className="evolucion-empty-picker">
+          <p className="muted">
+            Busque un paciente para abrir la historia clínica, o ábralo desde{' '}
+            <Link to="/principal/usuarios">Usuarios</Link> o Agenda.
+          </p>
+          {!pickerOpen ? (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setPickerOpen(true)}
+            >
+              Buscar paciente
+            </button>
+          ) : null}
+        </div>
       )}
 
       {documentoPaciente && (
@@ -1041,6 +1101,13 @@ export default function EvolucionPage() {
                 <button
                   type="button"
                   className="secondary"
+                  onClick={() => setPickerOpen(true)}
+                >
+                  Buscar paciente
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
                   onClick={() => openListModal('anexos')}
                 >
                   Documentos anexos
@@ -1063,42 +1130,35 @@ export default function EvolucionPage() {
                 <button type="button" className="secondary" onClick={startNueva}>
                   Nueva evolución
                 </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => navigate('/principal/usuarios')}
-                >
-                  Volver a usuarios
-                </button>
-              </div>
-              <div className="evolucion-more" ref={moreRef}>
-                <button
-                  type="button"
-                  className="secondary evolucion-more-toggle"
-                  aria-expanded={moreOpen}
-                  aria-haspopup="menu"
-                  onClick={() => setMoreOpen((v) => !v)}
-                >
-                  Otras opciones {moreOpen ? '▴' : '▾'}
-                </button>
-                {moreOpen ? (
-                  <div className="evolucion-more-menu" role="menu">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => setHcPanel('odontograma')}
-                    >
-                      Odontograma
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => setHcPanel('notas')}
-                    >
-                      Notas aclaratorias
-                    </button>
-                  </div>
-                ) : null}
+                <div className="evolucion-more" ref={moreRef}>
+                  <button
+                    type="button"
+                    className="secondary evolucion-more-toggle"
+                    aria-expanded={moreOpen}
+                    aria-haspopup="menu"
+                    onClick={() => setMoreOpen((v) => !v)}
+                  >
+                    Otras opciones {moreOpen ? '▴' : '▾'}
+                  </button>
+                  {moreOpen ? (
+                    <div className="evolucion-more-menu" role="menu">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => setHcPanel('odontograma')}
+                      >
+                        Odontograma
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => setHcPanel('notas')}
+                      >
+                        Notas aclaratorias
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>
@@ -1111,13 +1171,14 @@ export default function EvolucionPage() {
 
       {documentoPaciente && !loading && !hasPaciente && (
         <div className="alert alert-error">
-          No se encontraron datos del paciente en la vista del Relacionador para
-          este documento.
+          No se encontraron datos demográficos de este paciente. Puede continuar
+          con el listado y una nueva evolución.
         </div>
       )}
 
-      {documentoPaciente && !loading && hasPaciente && (
+      {documentoPaciente && !loading && (
         <>
+          {hasPaciente ? (
           <HcAccordionSection
             title="Datos del paciente"
             subtitle="Demografia Res. 1888 (misma fuente que Relacionador)"
@@ -1149,6 +1210,7 @@ export default function EvolucionPage() {
               onFormChange={setPatientFormFields}
             />
           </HcAccordionSection>
+          ) : null}
 
           <div className="evolucion-workspace">
             <HcAccordionSection
@@ -1563,6 +1625,10 @@ export default function EvolucionPage() {
           nombrePaciente={tituloPaciente}
           onClose={() => setListModal(null)}
         />
+      ) : null}
+
+      {pickerOpen ? (
+        <PacienteHcModal onClose={closePacientePicker} />
       ) : null}
 
       <ConfirmCloseDialog
