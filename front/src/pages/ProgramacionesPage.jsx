@@ -1,9 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { fetchAgendaCitas, messageFromAxiosError } from '../api/client';
+import {
+  fetchAgendaCitas,
+  fetchAgendaEstadosCita,
+  messageFromAxiosError,
+  updateAgendaCitaEstado,
+} from '../api/client';
 import { useCompany } from '../auth/CompanyContext';
+import {
+  getStoredAgendaFecha,
+  setStoredAgendaFecha,
+  setStoredHcDocumento,
+} from '../config';
 
-const ESTADOS_CANCELADOS = new Set([60, 61, 64, 71]);
+const ESTADOS_CANCELADOS = new Set([60, 61, 62, 63, 64, 71]);
+const ID_ESTADO_ASISTIO = 59;
 
 const SORT_COLS = [
   { key: 'profesional', label: 'Profesional' },
@@ -56,6 +67,17 @@ function formatHora12(hm) {
   return `${h12}:${mm} ${suf}`;
 }
 
+function rowClassForEstado(idEstado) {
+  const id = Number(idEstado);
+  if (ESTADOS_CANCELADOS.has(id)) {
+    return 'programaciones-row programaciones-row--cancelada';
+  }
+  if (id === ID_ESTADO_ASISTIO) {
+    return 'programaciones-row programaciones-row--asistio';
+  }
+  return 'programaciones-row';
+}
+
 function SortTh({ col, sortKey, sortDir, onSort }) {
   const active = sortKey === col.key;
   return (
@@ -70,20 +92,79 @@ function SortTh({ col, sortKey, sortDir, onSort }) {
   );
 }
 
+function EstadoSelect({ cita, estados, saving, onChange }) {
+  const actual = Number(cita.idEstado);
+  const opciones = [...estados];
+  if (
+    Number.isFinite(actual) &&
+    actual > 0 &&
+    !opciones.some((e) => e.idEstado === actual)
+  ) {
+    opciones.unshift({
+      idEstado: actual,
+      estado: cita.estado || `Estado ${actual}`,
+    });
+  }
+  return (
+    <select
+      className="programaciones-estado"
+      value={Number.isFinite(actual) && actual > 0 ? String(actual) : ''}
+      disabled={saving}
+      aria-label="Estado de la cita"
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        e.stopPropagation();
+        const id = Number(e.target.value);
+        if (!Number.isFinite(id) || id === actual) return;
+        void onChange(cita, id);
+      }}
+    >
+      {opciones.map((e) => (
+        <option key={e.idEstado} value={e.idEstado}>
+          {e.estado}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export default function ProgramacionesPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { documentoEmpresa } = useCompany();
-  const [fecha, setFecha] = useState(
-    () => location.state?.fecha || ymdLocal(new Date()),
-  );
+  const [fecha, setFecha] = useState(() => {
+    const fromState = String(location.state?.fecha ?? '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(fromState)) return fromState;
+    return getStoredAgendaFecha() || ymdLocal(new Date());
+  });
   const [citas, setCitas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [sortKey, setSortKey] = useState('profesional');
   const [sortDir, setSortDir] = useState('asc');
+  const [estados, setEstados] = useState([]);
+  const [savingId, setSavingId] = useState(null);
 
   const esHoy = fecha === ymdLocal(new Date());
+
+  useEffect(() => {
+    setStoredAgendaFecha(fecha);
+  }, [fecha]);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const rows = await fetchAgendaEstadosCita();
+        if (!cancel) setEstados(Array.isArray(rows) ? rows : []);
+      } catch {
+        if (!cancel) setEstados([]);
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancel = false;
@@ -184,7 +265,33 @@ export default function ProgramacionesPage() {
     if (cancelada) return;
     const doc = String(documentoPaciente ?? '').trim();
     if (!doc) return;
+    setStoredHcDocumento(doc);
     navigate('/principal/evolucion', { state: { documentoPaciente: doc } });
+  }
+
+  async function cambiarEstado(cita, idEstado) {
+    setSavingId(cita.idCita);
+    setError('');
+    try {
+      const data = await updateAgendaCitaEstado(cita.idCita, idEstado);
+      setCitas((prev) =>
+        prev.map((c) =>
+          c.idCita === cita.idCita
+            ? {
+                ...c,
+                idEstado: data.idEstado,
+                estado: data.estado,
+              }
+            : c,
+        ),
+      );
+    } catch (e) {
+      setError(
+        await messageFromAxiosError(e, 'No se pudo cambiar el estado'),
+      );
+    } finally {
+      setSavingId(null);
+    }
   }
 
   const vacio = agrupado ? grupos.length === 0 : filasPlanas.length === 0;
@@ -276,11 +383,7 @@ export default function ProgramacionesPage() {
                       return (
                         <tr
                           key={cita.idCita}
-                          className={
-                            cancelada
-                              ? 'programaciones-row programaciones-row--cancelada'
-                              : 'programaciones-row'
-                          }
+                          className={rowClassForEstado(cita.idEstado)}
                           onDoubleClick={() =>
                             goHc(cita.documentoPaciente, cancelada)
                           }
@@ -297,7 +400,14 @@ export default function ProgramacionesPage() {
                           <td>{cita.nombrePaciente || '—'}</td>
                           <td>{cita.telefonoPaciente || '—'}</td>
                           <td>{formatHora12(cita.hora)}</td>
-                          <td>{cita.estado || '—'}</td>
+                          <td className="programaciones-estado-cell">
+                            <EstadoSelect
+                              cita={cita}
+                              estados={estados}
+                              saving={savingId === cita.idCita}
+                              onChange={cambiarEstado}
+                            />
+                          </td>
                           <td>{cita.motivo || '—'}</td>
                           <td>{cita.tipoCompromiso || '—'}</td>
                         </tr>
@@ -311,11 +421,7 @@ export default function ProgramacionesPage() {
                     return (
                       <tr
                         key={cita.idCita}
-                        className={
-                          cancelada
-                            ? 'programaciones-row programaciones-row--cancelada'
-                            : 'programaciones-row'
-                        }
+                        className={rowClassForEstado(cita.idEstado)}
                         onDoubleClick={() =>
                           goHc(cita.documentoPaciente, cancelada)
                         }
@@ -324,7 +430,14 @@ export default function ProgramacionesPage() {
                         <td>{cita.nombrePaciente || '—'}</td>
                         <td>{cita.telefonoPaciente || '—'}</td>
                         <td>{formatHora12(cita.hora)}</td>
-                        <td>{cita.estado || '—'}</td>
+                        <td className="programaciones-estado-cell">
+                          <EstadoSelect
+                            cita={cita}
+                            estados={estados}
+                            saving={savingId === cita.idCita}
+                            onChange={cambiarEstado}
+                          />
+                        </td>
                         <td>{cita.motivo || '—'}</td>
                         <td>{cita.tipoCompromiso || '—'}</td>
                       </tr>

@@ -75,7 +75,7 @@ function printHistoriaTexto({
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Historia clínica — Impreso por CeereSio</title>
+  <title>Impreso por CeereSio</title>
   <style>
     html, body {
       background: #fff;
@@ -259,6 +259,7 @@ export default function EvolucionPage() {
   const [formatoFileDirs, setFormatoFileDirs] = useState(null);
   const [formatoLoading, setFormatoLoading] = useState(false);
   const [formatoUnavailable, setFormatoUnavailable] = useState(false);
+  const [formatoPrecargaLoading, setFormatoPrecargaLoading] = useState(false);
 
   const [draftStartedAt, setDraftStartedAt] = useState(null);
 
@@ -356,10 +357,11 @@ export default function EvolucionPage() {
   }, [documentoPaciente]);
 
   useEffect(() => {
-    if (
-      location.state?.buscarPaciente &&
-      !String(location.state?.documentoPaciente ?? '').trim()
-    ) {
+    if (String(location.state?.documentoPaciente ?? '').trim()) {
+      setPickerOpen(false);
+      return;
+    }
+    if (location.state?.buscarPaciente) {
       setPickerOpen(true);
     }
   }, [location.key, location.state?.buscarPaciente, location.state?.documentoPaciente]);
@@ -416,6 +418,7 @@ export default function EvolucionPage() {
     setFormatoFileDirs(null);
     setFormatoLoading(false);
     setFormatoUnavailable(false);
+    setFormatoPrecargaLoading(false);
   }, []);
 
   const loadFormato = useCallback(
@@ -829,7 +832,7 @@ export default function EvolucionPage() {
   );
 
   const formatoPayload =
-    selectedId != null && formatoFile && String(diagEspecifico || '').trim()
+    formatoFile && String(diagEspecifico || '').trim()
       ? diagEspecifico
       : '';
 
@@ -994,6 +997,28 @@ export default function EvolucionPage() {
     user,
   ]);
 
+  async function findLastFormatoPayload(fileName) {
+    const target = String(fileName ?? '').trim().toLowerCase();
+    if (!target) return '';
+    const candidatos = lista.filter(
+      (x) => x.origen === 'evolucion' && Number(x.idTipoEvaluacion) === 4,
+    );
+    for (const item of candidatos) {
+      try {
+        const rows = await fetchEvolucionDetalle(item.id);
+        const arr = Array.isArray(rows) ? rows : [];
+        const { general, especifico } = pickDiagFromRow(arr[0]);
+        const name = parseFormatoFileName(general);
+        if (name && name.toLowerCase() === target) {
+          return String(especifico || '').trim();
+        }
+      } catch {
+        /* siguiente candidato */
+      }
+    }
+    return '';
+  }
+
   async function onFormatoChange(fileName) {
     setError('');
     setFormatoUnavailable(false);
@@ -1005,9 +1030,22 @@ export default function EvolucionPage() {
       clearFormato();
       return;
     }
+    if (selectedId == null) {
+      setDiagEspecifico('');
+      setFormatoPrecargaLoading(true);
+    }
     const ok = await loadFormato(fileName);
     if (!ok) {
+      setFormatoPrecargaLoading(false);
       clearFormato();
+      return;
+    }
+    if (selectedId != null) return;
+    try {
+      const payload = await findLastFormatoPayload(fileName);
+      setDiagEspecifico(payload);
+    } finally {
+      setFormatoPrecargaLoading(false);
     }
   }
 
@@ -1481,7 +1519,11 @@ export default function EvolucionPage() {
                     Formato de historia clínica
                     <select
                       value={formatoFile}
-                      disabled={selectedId != null || isSelectedClosed}
+                      disabled={
+                        selectedId != null ||
+                        isSelectedClosed ||
+                        formatoPrecargaLoading
+                      }
                       onChange={(e) => void onFormatoChange(e.target.value)}
                     >
                       {selectedId == null ? (
@@ -1512,13 +1554,13 @@ export default function EvolucionPage() {
                 ) : (
                   <>
 
-                    {formatoLoading && (
+                    {(formatoLoading || formatoPrecargaLoading) && (
                       <p className="muted">Cargando formato…</p>
                     )}
 
-                    {formatoFile && formatoHtml ? (
+                    {formatoFile && formatoHtml && !formatoPrecargaLoading ? (
                       <HcFormatEditor
-                        key={`${formatoFile}-${selectedId ?? 'nueva'}`}
+                        key={`${formatoFile}-${selectedId ?? 'nueva'}-${String(diagEspecifico || '').length}`}
                         ref={formatRef}
                         applyKey={`${selectedId ?? 'nueva'}-${formatoFile}`}
                         html={formatoHtml}
@@ -1529,7 +1571,7 @@ export default function EvolucionPage() {
                         payload={formatoPayload}
                         disabled={isSelectedClosed}
                       />
-                    ) : formatoLoading ? null : (
+                    ) : formatoLoading || formatoPrecargaLoading ? null : (
                       <>
                         <label>
                           Diagnóstico / evolución (nota general)

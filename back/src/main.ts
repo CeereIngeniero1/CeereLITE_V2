@@ -2,11 +2,13 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, RequestMethod } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
+import { ExecutionErrorFilter } from './logging/execution-error.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
 
+  app.useGlobalFilters(new ExecutionErrorFilter());
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

@@ -43,6 +43,10 @@
   --warn-bg: rgba(229, 192, 123, 0.12);
   --ok: #3d9a6a;
   --ok-bg: rgba(61, 154, 106, 0.12);
+  --programaciones-asistio-bg: rgba(28, 108, 68, 0.48);
+  --programaciones-asistio-hover: rgba(28, 108, 68, 0.58);
+  --programaciones-cancelada-bg: rgba(168, 32, 24, 0.48);
+  --programaciones-cancelada-hover: rgba(168, 32, 24, 0.58);
 
   --hc-head-fg: #ffffff;
   --hc-head-fg-muted: rgba(255, 255, 255, 0.72);
@@ -111,6 +115,10 @@ html[data-theme='light'] {
   --warn-bg: rgba(165, 122, 18, 0.12);
   --ok: #2e7d4f;
   --ok-bg: rgba(46, 125, 79, 0.12);
+  --programaciones-asistio-bg: rgba(26, 102, 62, 0.34);
+  --programaciones-asistio-hover: rgba(26, 102, 62, 0.44);
+  --programaciones-cancelada-bg: rgba(176, 36, 28, 0.32);
+  --programaciones-cancelada-hover: rgba(176, 36, 28, 0.42);
 
   --hc-head-fg: #484a7d;
   --hc-head-fg-muted: rgba(72, 74, 125, 0.72);
@@ -2344,6 +2352,60 @@ button.brand-meta-btn:active:not(:disabled) {
   padding: 1.15rem 1.25rem 1.35rem;
 }
 
+.ui-tabs {
+  display: flex;
+  gap: 0.15rem;
+  padding: 0 1.25rem;
+  border-bottom: 1px solid var(--stroke-soft);
+  background: var(--surface-card);
+  overflow-x: auto;
+}
+
+.ui-tab {
+  appearance: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  margin-bottom: -1px;
+  padding: 0.65rem 0.9rem;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: none;
+}
+
+.ui-tab:hover:not(:disabled),
+.ui-tab:active:not(:disabled) {
+  color: var(--text);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.ui-tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--brand);
+}
+
+.ui-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.ui-tab-panel[hidden] {
+  display: none;
+}
+
+.agenda-tab-placeholder {
+  margin: 0;
+  padding: 1.25rem 0 0.5rem;
+}
+
 .saving-overlay {
   position: fixed;
   inset: 0;
@@ -2645,16 +2707,61 @@ button.programaciones-sort:active:not(:disabled) {
   cursor: default;
 }
 
-.programaciones-row--cancelada td {
-  color: var(--text-muted);
-}
-
 .programaciones-row--cancelada td:not(.programaciones-pro) {
-  background: var(--surface-input);
+  background: var(--programaciones-cancelada-bg);
 }
 
 .programaciones-row--cancelada:hover td:not(.programaciones-pro) {
-  background: var(--surface-hover);
+  background: var(--programaciones-cancelada-hover);
+}
+
+.programaciones-row--asistio td:not(.programaciones-pro) {
+  background: var(--programaciones-asistio-bg);
+}
+
+.programaciones-row--asistio:hover td:not(.programaciones-pro) {
+  background: var(--programaciones-asistio-hover);
+}
+
+.programaciones-estado-cell {
+  padding: 0;
+}
+
+.programaciones-estado {
+  display: block;
+  width: 100%;
+  min-width: 10rem;
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  padding: 0.35rem 0.5rem;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.programaciones-estado-cell:hover .programaciones-estado:not(:disabled),
+.programaciones-estado:focus,
+.programaciones-estado:focus-visible {
+  border-color: var(--stroke);
+  border-radius: 4px;
+  background-color: var(--surface-input);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='%238b9bb8' d='M1.2 1.2 6 6 10.8 1.2'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.45rem center;
+  background-size: 0.7rem;
+  padding-right: 1.35rem;
+  outline: none;
+}
+
+.programaciones-estado:disabled {
+  opacity: 0.65;
+  cursor: default;
 }
 
 .agenda-cal-wrap {
@@ -2883,8 +2990,13 @@ button.programaciones-sort:active:not(:disabled) {
   box-sizing: border-box;
 }
 
-.agenda-secundaria-celda:hover {
+.agenda-secundaria-celda:hover:not(:disabled) {
   filter: brightness(0.97);
+}
+
+.agenda-secundaria-celda:disabled {
+  cursor: default;
+  opacity: 0.75;
 }
 
 .agenda-cita-patient {
@@ -2941,6 +3053,10 @@ button.programaciones-sort:active:not(:disabled) {
 
 .agenda-cita-dialog {
   width: min(1100px, 100%);
+}
+
+.agenda-cita-dialog .modal-header {
+  border-bottom: 0;
 }
 
 .agenda-cuando-row {
@@ -3133,4 +3249,95 @@ button.programaciones-sort:active:not(:disabled) {
   flex-direction: column;
   gap: 0.3rem;
   margin-bottom: 0.65rem;
+}
+
+.agenda-disp-toolbar {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(14rem, 2fr);
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.agenda-disp-cal {
+  height: min(32rem, calc(100vh - 18rem));
+  margin: 0;
+  flex: none;
+  overflow: hidden;
+}
+
+.agenda-disp-cal .agenda-cal-scroll {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.agenda-disp-slot {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  z-index: 1;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.agenda-disp-slot:hover:not(:disabled) {
+  background: rgba(246, 213, 196, 0.5);
+  transform: none;
+  box-shadow: none;
+}
+
+.agenda-disp-slot:disabled {
+  cursor: default;
+}
+
+.agenda-historial-toolbar {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 0.65rem;
+}
+
+.agenda-historial-table-wrap {
+  overflow: auto;
+  max-height: 18rem;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+}
+
+.agenda-historial-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.agenda-historial-table th,
+.agenda-historial-table td {
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--stroke-soft);
+  white-space: nowrap;
+}
+
+.agenda-historial-table th {
+  background: var(--surface-muted, var(--surface-card));
+  font-weight: 650;
+  position: sticky;
+  top: 0;
+}
+
+.agenda-historial-table td.muted {
+  white-space: normal;
+}
+
+.agenda-historial-row--asistio td {
+  background: var(--programaciones-asistio-bg);
+}
+
+.agenda-historial-row--cancelada td {
+  background: var(--programaciones-cancelada-bg);
 }

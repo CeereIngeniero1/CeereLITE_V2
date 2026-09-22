@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { JwtPayload } from '../auth/auth.service';
 import { AgendaService } from './agenda.service';
 import { CreateAgendaCitaDto } from './dto/create-agenda-cita.dto';
+import { UpdateAgendaCitaEstadoDto } from './dto/update-agenda-cita-estado.dto';
 
 @Controller('agenda')
 @UseGuards(JwtAuthGuard)
@@ -49,11 +50,23 @@ export class AgendaController {
     return this.agendaService.listEspaciosDelDia(fecha, documentoEmpresa);
   }
 
+  @Get('estados-cita')
+  listEstadosCita() {
+    return this.agendaService.listEstadosCita();
+  }
+
   @Get('citas')
   listCitas(
     @Query('fecha') fecha?: string,
     @Query('documentoEmpresa') documentoEmpresa?: string,
+    @Query('documentoPaciente') documentoPaciente?: string,
   ) {
+    if (String(documentoPaciente ?? '').trim()) {
+      return this.agendaService.listCitasPaciente(
+        documentoPaciente,
+        documentoEmpresa,
+      );
+    }
     return this.agendaService.listCitasDelDia(fecha, documentoEmpresa);
   }
 
@@ -63,6 +76,15 @@ export class AgendaController {
     @Body() dto: CreateAgendaCitaDto,
   ) {
     return this.agendaService.crearCita(req.user, dto);
+  }
+
+  @Patch('citas/:id/estado')
+  cambiarEstadoCita(
+    @Request() req: ExpressRequest & { user: JwtPayload },
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateAgendaCitaEstadoDto,
+  ) {
+    return this.agendaService.cambiarEstadoCita(req.user, id, dto.idEstado);
   }
 
   @Patch('citas/:id')

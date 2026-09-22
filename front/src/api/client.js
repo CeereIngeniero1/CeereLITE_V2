@@ -350,6 +350,17 @@ export async function fetchAgendaCitas(fecha, documentoEmpresa) {
   return data;
 }
 
+/** @param {string} documentoPaciente @param {string} documentoEmpresa */
+export async function fetchAgendaCitasPaciente(
+  documentoPaciente,
+  documentoEmpresa,
+) {
+  const { data } = await api.get('/agenda/citas', {
+    params: { documentoPaciente, documentoEmpresa },
+  });
+  return data;
+}
+
 /** @param {string} fecha YYYY-MM-DD @param {string} documentoEmpresa */
 export async function fetchAgendaEspacios(fecha, documentoEmpresa) {
   const { data } = await api.get('/agenda/espacios', {
@@ -365,6 +376,11 @@ export async function fetchAgendaProfesionales() {
 
 export async function fetchAgendaTiposCompromiso() {
   const { data } = await api.get('/agenda/tipos-compromiso');
+  return data;
+}
+
+export async function fetchAgendaEstadosCita() {
+  const { data } = await api.get('/agenda/estados-cita');
   return data;
 }
 
@@ -393,5 +409,14 @@ export async function createAgendaCita(body) {
 /** @param {number} id @param {object} body */
 export async function updateAgendaCita(id, body) {
   const { data } = await api.patch(`/agenda/citas/${encodeURIComponent(id)}`, body);
+  return data;
+}
+
+/** @param {number} id @param {number} idEstado */
+export async function updateAgendaCitaEstado(id, idEstado) {
+  const { data } = await api.patch(
+    `/agenda/citas/${encodeURIComponent(id)}/estado`,
+    { idEstado },
+  );
   return data;
 }

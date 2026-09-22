@@ -6,9 +6,16 @@ import {
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type { JwtPayload } from '../auth/auth.service';
+import {
+  errorMessage,
+  isMissingDocumentoCambioCita,
+  logExecutionError,
+  sqlErrorNumber,
+} from '../logging/execution-error-log';
 import { CreateAgendaCitaDto } from './dto/create-agenda-cita.dto';
 
-const ESTADOS_CANCELADOS = [60, 61, 64, 71];
+const ESTADOS_CANCELADOS = [60, 61, 62, 63, 64, 71];
+const ESTADOS_CITA = [58, 59, 60, 61, 62, 63, 64, 65, 66, 71];
 const ID_ESTADO_VIGENTE = 58;
 const HORA_BASE = '1899-12-30';
 const PROC_TOP = 40;
@@ -23,6 +30,7 @@ export type AgendaProcedimientoDto = {
 
 export type AgendaCitaDto = {
   idCita: number;
+  fecha: string;
   hora: string;
   horaFin: string;
   idEstado: number | null;
@@ -37,6 +45,12 @@ export type AgendaCitaDto = {
   motivo: string;
   estado: string;
   procedimientos: AgendaProcedimientoDto[];
+};
+
+export type AgendaHistorialDto = {
+  documentoPaciente: string;
+  documentoEmpresa: string;
+  citas: AgendaCitaDto[];
 };
 
 export type AgendaDiaDto = {
@@ -59,6 +73,11 @@ export type AgendaTipoCompromisoDto = {
   idTipoCompromiso: number;
   tipoCompromiso: string;
   colorTipo: number | null;
+};
+
+export type AgendaEstadoCitaDto = {
+  idEstado: number;
+  estado: string;
 };
 
 export type AgendaSecundariaDto = {
@@ -163,6 +182,61 @@ function mapProcedimiento(
   };
 }
 
+const CITA_SELECT = `
+      SELECT IdCita,
+             Fecha,
+             CONVERT(varchar(10), Fecha, 23) AS FechaYmd,
+             HoraInicio,
+             Hora,
+             HoraFin,
+             IdEstado,
+             IdTipoCompromiso,
+             TipoCompromiso,
+             ColorTipo,
+             DocumentoPaciente,
+             NombrePaciente,
+             DocumentoProfesional,
+             NombreProfesional,
+             TelefonoPaciente,
+             Motivo,
+             Estado
+      FROM dbo.[Lite Cnsta AgendaCitas]
+`;
+
+function sqlDateToYmd(value: unknown): string {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+  }
+  const s = String(value ?? '').trim();
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : '';
+}
+
+function mapCitaRow(
+  row: Record<string, string | number | Date | null>,
+): AgendaCitaDto {
+  return {
+    idCita: Number(row.IdCita ?? 0),
+    fecha: sqlDateToYmd(row.FechaYmd ?? row.Fecha),
+    hora: String(row.Hora ?? ''),
+    horaFin: String(row.HoraFin ?? ''),
+    idEstado: row.IdEstado == null ? null : Number(row.IdEstado),
+    idTipoCompromiso:
+      row.IdTipoCompromiso == null ? null : Number(row.IdTipoCompromiso),
+    tipoCompromiso: String(row.TipoCompromiso ?? ''),
+    colorTipo: row.ColorTipo == null ? null : Number(row.ColorTipo),
+    documentoPaciente: String(row.DocumentoPaciente ?? ''),
+    nombrePaciente: String(row.NombrePaciente ?? ''),
+    documentoProfesional: String(row.DocumentoProfesional ?? ''),
+    nombreProfesional: String(row.NombreProfesional ?? ''),
+    telefonoPaciente: String(row.TelefonoPaciente ?? ''),
+    motivo: String(row.Motivo ?? ''),
+    estado: String(row.Estado ?? ''),
+    procedimientos: [],
+  };
+}
+
 function extractInsertedId(result: unknown): number | null {
   if (!Array.isArray(result) || result.length === 0) return null;
   const row = result[0] as Record<string, unknown>;
@@ -259,6 +333,23 @@ export class AgendaService {
     }));
   }
 
+  async listEstadosCita(): Promise<AgendaEstadoCitaDto[]> {
+    const rows = await this.dataSource.query<
+      Record<string, string | number | null>[]
+    >(
+      `
+      SELECT [Id Estado] AS IdEstado, Estado
+      FROM dbo.Estado
+      WHERE [Id Estado] IN (${ESTADOS_CITA.join(', ')})
+      ORDER BY [Id Estado]
+      `,
+    );
+    return rows.map((row) => ({
+      idEstado: Number(row.IdEstado ?? 0),
+      estado: String(row.Estado ?? '').trim(),
+    }));
+  }
+
   async listCitasDelDia(
     fechaRaw: string | undefined,
     documentoEmpresaRaw?: string,
@@ -276,24 +367,7 @@ export class AgendaService {
     const rows = await this.dataSource.query<
       Record<string, string | number | Date | null>[]
     >(
-      `
-      SELECT IdCita,
-             Fecha,
-             HoraInicio,
-             Hora,
-             HoraFin,
-             IdEstado,
-             IdTipoCompromiso,
-             TipoCompromiso,
-             ColorTipo,
-             DocumentoPaciente,
-             NombrePaciente,
-             DocumentoProfesional,
-             NombreProfesional,
-             TelefonoPaciente,
-             Motivo,
-             Estado
-      FROM dbo.[Lite Cnsta AgendaCitas]
+      `${CITA_SELECT}
       WHERE Fecha >= CONVERT(datetime, @0, 120)
         AND Fecha < CONVERT(datetime, @1, 120)
         AND LTRIM(RTRIM(ISNULL(DocumentoEmpresa, N''))) = LTRIM(RTRIM(@2))
@@ -302,50 +376,62 @@ export class AgendaService {
       [desdeSql, hastaExclSql, documentoEmpresa],
     );
 
-    const citas: AgendaCitaDto[] = rows.map((row) => ({
-      idCita: Number(row.IdCita ?? 0),
-      hora: String(row.Hora ?? ''),
-      horaFin: String(row.HoraFin ?? ''),
-      idEstado: row.IdEstado == null ? null : Number(row.IdEstado),
-      idTipoCompromiso:
-        row.IdTipoCompromiso == null ? null : Number(row.IdTipoCompromiso),
-      tipoCompromiso: String(row.TipoCompromiso ?? ''),
-      colorTipo: row.ColorTipo == null ? null : Number(row.ColorTipo),
-      documentoPaciente: String(row.DocumentoPaciente ?? ''),
-      nombrePaciente: String(row.NombrePaciente ?? ''),
-      documentoProfesional: String(row.DocumentoProfesional ?? ''),
-      nombreProfesional: String(row.NombreProfesional ?? ''),
-      telefonoPaciente: String(row.TelefonoPaciente ?? ''),
-      motivo: String(row.Motivo ?? ''),
-      estado: String(row.Estado ?? ''),
-      procedimientos: [],
-    }));
+    const citas = rows.map(mapCitaRow);
+    await this.attachProcedimientos(citas);
+    return { fecha, citas };
+  }
 
+  async listCitasPaciente(
+    documentoPacienteRaw: string | undefined,
+    documentoEmpresaRaw?: string,
+  ): Promise<AgendaHistorialDto> {
+    const documentoPaciente = String(documentoPacienteRaw ?? '').trim();
+    if (!documentoPaciente) {
+      throw new BadRequestException('documentoPaciente es obligatorio');
+    }
+    const documentoEmpresa = String(documentoEmpresaRaw ?? '').trim();
+    if (!documentoEmpresa) {
+      throw new BadRequestException('documentoEmpresa es obligatorio');
+    }
+    const rows = await this.dataSource.query<
+      Record<string, string | number | Date | null>[]
+    >(
+      `${CITA_SELECT}
+      WHERE LTRIM(RTRIM(ISNULL(DocumentoPaciente, N''))) = LTRIM(RTRIM(@0))
+        AND LTRIM(RTRIM(ISNULL(DocumentoEmpresa, N''))) = LTRIM(RTRIM(@1))
+      ORDER BY Fecha DESC, HoraInicio DESC, IdCita DESC
+      `,
+      [documentoPaciente, documentoEmpresa],
+    );
+
+    const citas = rows.map(mapCitaRow);
+    await this.attachProcedimientos(citas);
+    return { documentoPaciente, documentoEmpresa, citas };
+  }
+
+  private async attachProcedimientos(citas: AgendaCitaDto[]): Promise<void> {
     const ids = citas.map((c) => c.idCita).filter((id) => id > 0);
-    if (ids.length) {
-      const procRows = await this.dataSource.query<
-        Record<string, string | number | null>[]
-      >(
-        `
+    if (!ids.length) return;
+    const procRows = await this.dataSource.query<
+      Record<string, string | number | null>[]
+    >(
+      `
         SELECT IdCita, CodigoObjeto, TiempoMinutos, UnidadTiempo, DescripcionObjeto
         FROM dbo.[Lite Cnsta AgendaCitaProcedimientos]
         WHERE IdCita IN (${ids.join(',')})
         ORDER BY IdCita, CodigoObjeto
         `,
-      );
-      const byCita = new Map<number, AgendaProcedimientoDto[]>();
-      for (const row of procRows) {
-        const id = Number(row.IdCita ?? 0);
-        const list = byCita.get(id) ?? [];
-        list.push(mapProcedimiento(row));
-        byCita.set(id, list);
-      }
-      for (const cita of citas) {
-        cita.procedimientos = byCita.get(cita.idCita) ?? [];
-      }
+    );
+    const byCita = new Map<number, AgendaProcedimientoDto[]>();
+    for (const row of procRows) {
+      const id = Number(row.IdCita ?? 0);
+      const list = byCita.get(id) ?? [];
+      list.push(mapProcedimiento(row));
+      byCita.set(id, list);
     }
-
-    return { fecha, citas };
+    for (const cita of citas) {
+      cita.procedimientos = byCita.get(cita.idCita) ?? [];
+    }
   }
 
   async listEspaciosDelDia(
@@ -650,7 +736,7 @@ export class AgendaService {
       docEmpresa,
     );
 
-    await this.dataSource.query(
+    await this.updateCompromisoViAllowingMissingCambioCita(
       `
       UPDATE dbo.CompromisoVI
       SET [Entidad Principal] = @0,
@@ -679,6 +765,33 @@ export class AgendaService {
         docUsuario,
         docEmpresa,
       ],
+      `
+      UPDATE dbo.CompromisoVI
+      SET [Entidad Principal] = @0,
+          [Entidad Responsable] = @1,
+          [Descripci\u00f3n CompromisoIV] = @2,
+          [Fecha Inicio CompromisoVI] = CONVERT(datetime, @3, 120),
+          [Fecha Fin CompromisoVI] = CONVERT(datetime, @3, 120),
+          [Hora Inicio CompromisoVI] = CONVERT(datetime, @4, 120),
+          [Hora Fin CompromisoVI] = CONVERT(datetime, @5, 120),
+          [Id Tipo Compromiso] = @6,
+          [Entidad Atendida] = @0,
+          [Entidad Que Atendio] = @1,
+          [Documento Empresa] = @8
+      WHERE [Id CompromisoVI] = @7
+      `,
+      [
+        paciente,
+        profesional,
+        motivo,
+        desdeSql,
+        horaIniSql,
+        horaFinSql,
+        idTipo,
+        idCita,
+        docEmpresa,
+      ],
+      `actualizarCita ${idCita}`,
     );
 
     await this.dataSource.query(
@@ -695,6 +808,119 @@ export class AgendaService {
       );
     }
     return { idCita };
+  }
+
+  async cambiarEstadoCita(
+    user: JwtPayload,
+    idRaw: number,
+    idEstadoRaw: number,
+  ): Promise<{ idCita: number; idEstado: number; estado: string }> {
+    const idCita = Number(idRaw);
+    if (!Number.isInteger(idCita) || idCita < 1) {
+      throw new BadRequestException('id de cita no válido');
+    }
+    const idEstado = Number(idEstadoRaw);
+    if (!Number.isInteger(idEstado) || !ESTADOS_CITA.includes(idEstado)) {
+      throw new BadRequestException('estado de cita no válido');
+    }
+
+    const rows = await this.dataSource.query<
+      {
+        id: number;
+        profesional: string;
+        fecha: Date | string | null;
+        horaInicio: string | null;
+        horaFin: string | null;
+        idEstado: number | null;
+      }[]
+    >(
+      `
+      SELECT TOP 1
+        [Id CompromisoVI] AS id,
+        LTRIM(RTRIM([Entidad Responsable])) AS profesional,
+        [Fecha Inicio CompromisoVI] AS fecha,
+        FORMAT([Hora Inicio CompromisoVI], 'HH:mm') AS horaInicio,
+        FORMAT([Hora Fin CompromisoVI], 'HH:mm') AS horaFin,
+        ISNULL([Id Estado], 0) AS idEstado
+      FROM dbo.CompromisoVI
+      WHERE [Id CompromisoVI] = @0
+      `,
+      [idCita],
+    );
+    const actual = rows[0];
+    if (!actual) {
+      throw new NotFoundException('Cita no encontrada');
+    }
+
+    const eraCancelada = ESTADOS_CANCELADOS.includes(Number(actual.idEstado));
+    const seraActiva = !ESTADOS_CANCELADOS.includes(idEstado);
+    if (seraActiva && eraCancelada) {
+      const fecha = sqlDateToYmd(actual.fecha);
+      const horaInicio = String(actual.horaInicio ?? '').trim();
+      const horaFin = String(actual.horaFin ?? '').trim();
+      const profesional = String(actual.profesional ?? '').trim();
+      if (fecha && horaInicio && horaFin && profesional) {
+        await this.assertHorarioLibre(
+          profesional,
+          ymdToSqlDateTime(fecha),
+          ymdExclusiveEndSql(fecha),
+          horaSql(horaInicio),
+          horaSql(horaFin),
+          idCita,
+        );
+      }
+    }
+
+    const docUsuario = String(user.documentoEntidad ?? '').trim();
+    await this.updateCompromisoViAllowingMissingCambioCita(
+      `
+      UPDATE dbo.CompromisoVI
+      SET [Id Estado] = @0,
+          [DocumentoCambioCita] = @1
+      WHERE [Id CompromisoVI] = @2
+      `,
+      [idEstado, docUsuario, idCita],
+      `
+      UPDATE dbo.CompromisoVI
+      SET [Id Estado] = @0
+      WHERE [Id CompromisoVI] = @1
+      `,
+      [idEstado, idCita],
+      `cambiarEstadoCita ${idCita}`,
+    );
+
+    const est = await this.dataSource.query<{ estado: string }[]>(
+      `SELECT TOP 1 Estado AS estado FROM dbo.Estado WHERE [Id Estado] = @0`,
+      [idEstado],
+    );
+    return {
+      idCita,
+      idEstado,
+      estado: String(est[0]?.estado ?? '').trim(),
+    };
+  }
+
+  private async updateCompromisoViAllowingMissingCambioCita(
+    sqlWithCol: string,
+    paramsWith: unknown[],
+    sqlWithoutCol: string,
+    paramsWithout: unknown[],
+    context: string,
+  ): Promise<void> {
+    try {
+      await this.dataSource.query(sqlWithCol, paramsWith);
+    } catch (err) {
+      logExecutionError({
+        message: errorMessage(err),
+        sqlNumber: sqlErrorNumber(err),
+        context,
+      });
+      if (isMissingDocumentoCambioCita(err)) {
+        await this.dataSource.query(sqlWithoutCol, paramsWithout);
+        return;
+      }
+      throw err;
+    }
   }
 
   private async assertHorarioLibre(

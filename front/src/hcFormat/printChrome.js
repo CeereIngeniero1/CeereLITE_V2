@@ -4,9 +4,16 @@ export const CEERE_PRINT_FOOTER_TEXT = 'Impreso por CeereSio';
 
 export function printFooterCss() {
   return `
-@page { margin: 12mm 12mm 18mm; }
+@page { margin: 0; }
 .ceere-print-footer { display: none; }
 @media print {
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  body {
+    margin: 12mm 12mm 18mm !important;
+  }
   .ceere-print-footer {
     display: block;
     position: fixed;

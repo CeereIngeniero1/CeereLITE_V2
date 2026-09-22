@@ -1,4 +1,4 @@
-/** Imprime un HTML en un iframe oculto (evita la página en blanco de window.open + print inmediato). */
+/** Imprime un HTML en un iframe about:blank (sin blob URL en el pie del navegador). */
 export function printHtmlDocument(html, options = {}) {
   const revokeUrls = [...(options.revokeUrls ?? [])];
   return new Promise((resolve) => {
@@ -16,10 +16,6 @@ export function printHtmlDocument(html, options = {}) {
       pointerEvents: 'none',
       zIndex: '-1',
     });
-
-    const wrapperBlob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    const wrapperUrl = URL.createObjectURL(wrapperBlob);
-    revokeUrls.push(wrapperUrl);
 
     let finished = false;
     let started = false;
@@ -92,17 +88,30 @@ export function printHtmlDocument(html, options = {}) {
       });
     }
 
-    iframe.addEventListener('load', () => {
-      tryStartPrint();
-    });
+    function writeAndPrint() {
+      const doc = iframe.contentDocument;
+      if (!doc) {
+        finish(false);
+        return;
+      }
+      doc.open();
+      doc.write(html);
+      doc.close();
+      window.setTimeout(() => tryStartPrint(), 80);
+      window.setTimeout(() => {
+        if (!started) tryStartPrint();
+      }, 400);
+      window.setTimeout(() => {
+        if (!started) finish(false);
+      }, 20000);
+    }
 
-    iframe.src = wrapperUrl;
+    iframe.src = 'about:blank';
     document.body.appendChild(iframe);
-    window.setTimeout(() => {
-      tryStartPrint();
-    }, 400);
-    window.setTimeout(() => {
-      if (!started) finish(false);
-    }, 20000);
+    if (iframe.contentDocument?.readyState === 'complete') {
+      writeAndPrint();
+    } else {
+      iframe.addEventListener('load', writeAndPrint, { once: true });
+    }
   });
 }

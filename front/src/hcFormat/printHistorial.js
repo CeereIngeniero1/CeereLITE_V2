@@ -389,7 +389,7 @@ export async function printHistorialHc({
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Historial historia clínica — Impreso por CeereSio</title>
+  <title>Impreso por CeereSio</title>
   <style>
     html, body { background: #fff; color: #111; }
     body { font-family: Segoe UI, Arial, sans-html; margin: 24px; }

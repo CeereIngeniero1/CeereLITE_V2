@@ -3,7 +3,8 @@
   Ejecutar a mano en la base CeereSio (SSMS o sqlcmd).
   El API Nest no corre este archivo.
 
-  Re-ejecutable: CREATE OR ALTER VIEW (SQL Server 2016+).
+  Re-ejecutable: ALTER TABLE si falta la columna (COL_LENGTH) + CREATE OR ALTER VIEW
+  (SQL Server 2016+).
 
   Convención de nombres
   ---------------------
@@ -48,6 +49,14 @@
   1. CREATE OR ALTER VIEW dbo.[Lite Cnsta Nombre] en este archivo.
   2. SELECT … FROM dbo.[Lite Cnsta Nombre] WHERE … en el servicio Nest.
   3. Volver a ejecutar este script en SQL Server.
+
+  Columnas Lite (ALTER si no existen)
+  -----------------------------------
+  CompromisoVI: Documento Empresa, Documento Personal, DocumentoCambioCita,
+                Hora Fin CompromisoVI
+  Compromiso:   Documento Empresa
+  Evaluación Entidad: Documento Usuario/Empresa/Profesional, Id Estado Web,
+                      Con Orden, Sincronizado, PreguntarControl, Rips, Id Terminal
 */
 
 DROP VIEW IF EXISTS dbo.vw_LiteHcListaEvaluacion;
@@ -64,6 +73,71 @@ DROP VIEW IF EXISTS dbo.[Lite Cnsta PacienteAgenda];
 DROP VIEW IF EXISTS dbo.vw_LiteEmpresa;
 DROP VIEW IF EXISTS dbo.vw_LiteUsuarioPerfil;
 DROP VIEW IF EXISTS dbo.vw_LiteTipoEvaluacion;
+GO
+
+-- =============================================================================
+-- Columnas Lite que pueden faltar en bases Ceere antiguas.
+-- Idempotente: si COL_LENGTH no es NULL, no altera.
+-- Tipos: documentos nvarchar(50); horas datetime; flags de evaluación int.
+-- =============================================================================
+
+-- CompromisoVI (alta, edición y cambio de estado de citas)
+IF COL_LENGTH('dbo.CompromisoVI', 'Documento Empresa') IS NULL
+  ALTER TABLE dbo.CompromisoVI ADD [Documento Empresa] nvarchar(50) NULL;
+GO
+
+IF COL_LENGTH('dbo.CompromisoVI', 'Documento Personal') IS NULL
+  ALTER TABLE dbo.CompromisoVI ADD [Documento Personal] nvarchar(50) NULL;
+GO
+
+IF COL_LENGTH('dbo.CompromisoVI', 'DocumentoCambioCita') IS NULL
+  ALTER TABLE dbo.CompromisoVI ADD [DocumentoCambioCita] nvarchar(50) NULL;
+GO
+
+IF COL_LENGTH('dbo.CompromisoVI', 'Hora Fin CompromisoVI') IS NULL
+  ALTER TABLE dbo.CompromisoVI ADD [Hora Fin CompromisoVI] datetime NULL;
+GO
+
+-- Compromiso (filtro de espacios primaria/secundaria por empresa)
+IF COL_LENGTH('dbo.Compromiso', 'Documento Empresa') IS NULL
+  ALTER TABLE dbo.Compromiso ADD [Documento Empresa] nvarchar(50) NULL;
+GO
+
+-- Evaluación Entidad (alta de evolución)
+IF COL_LENGTH('dbo.[Evaluación Entidad]', 'Documento Usuario') IS NULL
+  ALTER TABLE dbo.[Evaluación Entidad] ADD [Documento Usuario] nvarchar(50) NULL;
+GO
+
+IF COL_LENGTH('dbo.[Evaluación Entidad]', 'Documento Empresa') IS NULL
+  ALTER TABLE dbo.[Evaluación Entidad] ADD [Documento Empresa] nvarchar(50) NULL;
+GO
+
+IF COL_LENGTH('dbo.[Evaluación Entidad]', 'Documento Profesional') IS NULL
+  ALTER TABLE dbo.[Evaluación Entidad] ADD [Documento Profesional] nvarchar(50) NULL;
+GO
+
+IF COL_LENGTH('dbo.[Evaluación Entidad]', 'Id Estado Web') IS NULL
+  ALTER TABLE dbo.[Evaluación Entidad] ADD [Id Estado Web] int NULL;
+GO
+
+IF COL_LENGTH('dbo.[Evaluación Entidad]', 'Con Orden') IS NULL
+  ALTER TABLE dbo.[Evaluación Entidad] ADD [Con Orden] int NULL;
+GO
+
+IF COL_LENGTH('dbo.[Evaluación Entidad]', 'Sincronizado') IS NULL
+  ALTER TABLE dbo.[Evaluación Entidad] ADD [Sincronizado] int NULL;
+GO
+
+IF COL_LENGTH('dbo.[Evaluación Entidad]', 'PreguntarControl') IS NULL
+  ALTER TABLE dbo.[Evaluación Entidad] ADD [PreguntarControl] int NULL;
+GO
+
+IF COL_LENGTH('dbo.[Evaluación Entidad]', 'Rips') IS NULL
+  ALTER TABLE dbo.[Evaluación Entidad] ADD [Rips] int NULL;
+GO
+
+IF COL_LENGTH('dbo.[Evaluación Entidad]', 'Id Terminal') IS NULL
+  ALTER TABLE dbo.[Evaluación Entidad] ADD [Id Terminal] int NULL;
 GO
 
 -- =============================================================================
@@ -495,13 +569,13 @@ GO
 --     AND LTRIM(RTRIM(ISNULL(DocumentoEmpresa, N''))) = LTRIM(RTRIM(@2))
 --   ORDER BY NombreProfesional, HoraInicio, IdCita
 --
--- Choque al crear (POST /agenda/citas). Canceladas: 60, 61, 64, 71.
+-- Choque al crear (POST /agenda/citas). Canceladas: 60, 61, 62, 63, 64, 71.
 --   SELECT TOP 1 [Id CompromisoVI]
 --   FROM dbo.CompromisoVI
 --   WHERE LTRIM(RTRIM([Entidad Responsable])) = LTRIM(RTRIM(@profesional))
 --     AND [Fecha Inicio CompromisoVI] >= CONVERT(datetime, @desde, 120)
 --     AND [Fecha Inicio CompromisoVI] < CONVERT(datetime, @hastaExcl, 120)
---     AND ISNULL([Id Estado], 0) NOT IN (60, 61, 64, 71)
+--     AND ISNULL([Id Estado], 0) NOT IN (60, 61, 62, 63, 64, 71)
 --     AND CONVERT(time, [Hora Inicio CompromisoVI]) < CONVERT(time, @horaFin)
 --     AND CONVERT(time, ISNULL([Hora Fin CompromisoVI], [Hora Inicio CompromisoVI]))
 --         > CONVERT(time, @horaInicio)
@@ -536,6 +610,11 @@ GO
 --   WHERE [Id CompromisoVI] = @idCita
 --   DELETE FROM dbo.CompromisoVII WHERE [Id CompromisoVI] = @idCita
 --   INSERT INTO dbo.CompromisoVII ([Id CompromisoVI], [Código Objeto]) VALUES (...)
+--
+-- Cambio de estado (PATCH /agenda/citas/:id/estado). Catálogo dbo.Estado:
+--   58 Vigente, 59 Asistió, 60-63/64/71 canceladas, 65 Confirmado, 66 En espera.
+--   UPDATE dbo.CompromisoVI SET [Id Estado] = @idEstado, [DocumentoCambioCita] = @usuario
+--   WHERE [Id CompromisoVI] = @idCita
 -- =============================================================================
 CREATE OR ALTER VIEW dbo.[Lite Cnsta AgendaCitas]
 AS

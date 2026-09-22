@@ -70,3 +70,19 @@ export function setStoredHcDocumento(documento) {
 export function clearStoredHcDocumento() {
   sessionStorage.removeItem(HC_DOC_KEY);
 }
+
+const AGENDA_FECHA_KEY = 'ceere.agendaFecha';
+
+export function getStoredAgendaFecha() {
+  const s = String(sessionStorage.getItem(AGENDA_FECHA_KEY) ?? '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+}
+
+export function setStoredAgendaFecha(fecha) {
+  const s = String(fecha ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    sessionStorage.removeItem(AGENDA_FECHA_KEY);
+    return;
+  }
+  sessionStorage.setItem(AGENDA_FECHA_KEY, s);
+}
