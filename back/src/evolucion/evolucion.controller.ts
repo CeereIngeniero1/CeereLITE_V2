@@ -10,7 +10,6 @@ import {
   Request,
   StreamableFile,
   UploadedFile,
-  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -18,7 +17,6 @@ import { createReadStream } from 'fs';
 import type { Request as ExpressRequest } from 'express';
 import type { JwtPayload } from '../auth/auth.service';
 import type { UploadedFotoFile } from '../entidad-foto';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateEvaluacionDto } from './dto/create-evaluacion.dto';
 import { CreateNotaAclaratoriaDto } from './dto/create-nota-aclaratoria.dto';
 import { CreateObservacionDto } from './dto/create-observacion.dto';
@@ -29,7 +27,6 @@ import { EvolucionService } from './evolucion.service';
 import { FormatosHcService } from './formatos-hc.service';
 
 @Controller('evolucion')
-@UseGuards(JwtAuthGuard)
 export class EvolucionController {
   constructor(
     private readonly evolucionService: EvolucionService,

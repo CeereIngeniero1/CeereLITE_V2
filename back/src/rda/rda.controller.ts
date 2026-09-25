@@ -1,9 +1,7 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { RdaService } from './rda.service';
 
 @Controller('rda')
-@UseGuards(JwtAuthGuard)
 export class RdaController {
   constructor(private readonly rdaService: RdaService) {}
 

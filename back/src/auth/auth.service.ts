@@ -20,7 +20,9 @@ export type AuthUserRow = {
   userLevel: number;
 };
 
-export type JwtPayload = AuthUserRow;
+export type JwtPayload = AuthUserRow & {
+  typ?: 'access' | 'refresh';
+};
 
 export type AuthProfileDto = AuthUserRow & {
   primerNombre: string;
@@ -80,15 +82,26 @@ export class AuthService {
       userLevel,
     };
 
-    const token = await this.jwtService.signAsync(payload);
+    return this.issueTokens(payload);
+  }
 
-    return {
-      token,
-      username: payload.username,
-      userLevel,
-      documentoEntidad: payload.documentoEntidad,
-      nombreUsuario: payload.nombreUsuario,
-    };
+  async refresh(refreshToken: string) {
+    const raw = String(refreshToken ?? '').trim();
+    if (!raw) {
+      throw new UnauthorizedException('Sesión expirada');
+    }
+    let payload: JwtPayload;
+    try {
+      payload = await this.jwtService.verifyAsync<JwtPayload>(raw, {
+        secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
+      });
+    } catch {
+      throw new UnauthorizedException('Sesión expirada');
+    }
+    if (payload.typ !== 'refresh') {
+      throw new UnauthorizedException('Sesión expirada');
+    }
+    return this.issueTokens(payload);
   }
 
   async getProfile(user: JwtPayload): Promise<AuthProfileDto> {
@@ -243,6 +256,38 @@ export class AuthService {
       documentoEntidad: String(user?.documentoEntidad ?? '').trim(),
       nombreUsuario: String(user?.nombreUsuario ?? '').trim(),
       userLevel: Number(user?.userLevel) || 0,
+    };
+  }
+
+  private async issueTokens(user: JwtPayload) {
+    const session = this.normalizeSession(user);
+    const accessExpires = this.config.get<string>('JWT_EXPIRES_IN') ?? '1h';
+    const refreshExpires =
+      this.config.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '10h';
+    const signExp = {
+      expiresIn: accessExpires,
+    } as { expiresIn: `${number}h` | `${number}d` | number };
+    const refreshExp = {
+      secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
+      expiresIn: refreshExpires,
+    } as {
+      secret: string;
+      expiresIn: `${number}h` | `${number}d` | number;
+    };
+    const [token, refreshToken] = await Promise.all([
+      this.jwtService.signAsync({ ...session, typ: 'access' as const }, signExp),
+      this.jwtService.signAsync(
+        { ...session, typ: 'refresh' as const },
+        refreshExp,
+      ),
+    ]);
+    return {
+      token,
+      refreshToken,
+      username: session.username,
+      userLevel: session.userLevel,
+      documentoEntidad: session.documentoEntidad,
+      nombreUsuario: session.nombreUsuario,
     };
   }
 

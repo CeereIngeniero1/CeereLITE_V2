@@ -1,5 +1,16 @@
 import axios from 'axios';
-import { API_V1, clearStoredEmpresa, clearStoredHcDocumento, clearStoredToken, getStoredToken } from '../config.js';
+import {
+  API_ORIGIN,
+  API_V1,
+  clearStoredEmpresa,
+  clearStoredHcDocumento,
+  clearStoredRefreshToken,
+  clearStoredToken,
+  getStoredRefreshToken,
+  getStoredToken,
+  setStoredRefreshToken,
+  setStoredToken,
+} from '../config.js';
 
 export const api = axios.create({
   baseURL: API_V1,
@@ -22,15 +33,72 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+let refreshInFlight = null;
+
+function requestUrl(config) {
+  return String(config?.url ?? '');
+}
+
+function isLoginRequest(config) {
+  return requestUrl(config).includes('/auth/login');
+}
+
+function isRefreshRequest(config) {
+  return requestUrl(config).includes('/auth/refresh');
+}
+
+function forceLogout() {
+  clearStoredToken();
+  clearStoredRefreshToken();
+  clearStoredEmpresa();
+  clearStoredHcDocumento();
+  if (typeof window === 'undefined') return;
+  const path = window.location.pathname || '';
+  if (!path.startsWith('/login')) {
+    window.location.assign('/login');
+  }
+}
+
+async function refreshSession() {
+  const refreshToken = getStoredRefreshToken();
+  if (!refreshToken) {
+    throw new Error('Sin refresh token');
+  }
+  const { data } = await axios.post(`${API_V1}/auth/refresh`, { refreshToken });
+  setStoredToken(data.token);
+  setStoredRefreshToken(data.refreshToken);
+  return data.token;
+}
+
 api.interceptors.response.use(
   (r) => r,
-  (err) => {
-    if (err.response?.status === 401) {
-      clearStoredToken();
-      clearStoredEmpresa();
-      clearStoredHcDocumento();
+  async (err) => {
+    const original = err.config;
+    if (!original || err.response?.status !== 401) {
+      return Promise.reject(err);
     }
-    return Promise.reject(err);
+    if (isLoginRequest(original)) {
+      return Promise.reject(err);
+    }
+    if (isRefreshRequest(original) || original._retry) {
+      forceLogout();
+      return Promise.reject(err);
+    }
+    original._retry = true;
+    try {
+      if (!refreshInFlight) {
+        refreshInFlight = refreshSession().finally(() => {
+          refreshInFlight = null;
+        });
+      }
+      const token = await refreshInFlight;
+      original.headers = original.headers ?? {};
+      original.headers.Authorization = `Bearer ${token}`;
+      return api.request(original);
+    } catch {
+      forceLogout();
+      return Promise.reject(err);
+    }
   },
 );
 
@@ -73,8 +141,7 @@ export async function fetchUsers() {
 }
 
 export async function fetchHealthDb() {
-  const base = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? 'http://localhost:3001';
-  const { data } = await axios.get(`${base}/health/db`);
+  const { data } = await axios.get(`${API_ORIGIN}/health/db`);
   return data;
 }
 

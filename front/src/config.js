@@ -1,5 +1,8 @@
-const API_ORIGIN =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? 'http://localhost:3001';
+const rawApiBase = String(import.meta.env.VITE_API_BASE_URL ?? '').trim();
+if (!rawApiBase) {
+  throw new Error('Falta VITE_API_BASE_URL en front/.env');
+}
+const API_ORIGIN = rawApiBase.replace(/\/$/, '');
 
 export const API_V1 = `${API_ORIGIN}/api/v1`;
 export { API_ORIGIN };
@@ -14,6 +17,25 @@ export function setStoredToken(token) {
 
 export function clearStoredToken() {
   localStorage.removeItem('token');
+}
+
+const REFRESH_KEY = 'refreshToken';
+
+export function getStoredRefreshToken() {
+  return localStorage.getItem(REFRESH_KEY);
+}
+
+export function setStoredRefreshToken(token) {
+  const value = String(token ?? '').trim();
+  if (!value) {
+    localStorage.removeItem(REFRESH_KEY);
+    return;
+  }
+  localStorage.setItem(REFRESH_KEY, value);
+}
+
+export function clearStoredRefreshToken() {
+  localStorage.removeItem(REFRESH_KEY);
 }
 
 const EMPRESA_KEY = 'ceere.empresa';

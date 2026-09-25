@@ -117,9 +117,9 @@ export function resolveFotoEntidad(
   fileName: string | null,
   documento: string,
 ): { fotoUrl: string | null; fotoArchivo: string | null } {
-  const apiBase = (
-    config.get<string>('API_PUBLIC_BASE_URL') ?? 'http://localhost:3001'
-  ).replace(/\/$/, '');
+  const apiBase = config
+    .getOrThrow<string>('API_PUBLIC_BASE_URL')
+    .replace(/\/$/, '');
   const imagesPath = config.get<string>('STATIC_IMAGES_PATH');
   const doc = String(documento ?? '').trim();
   const fromColumn = basenameFoto(fileName);

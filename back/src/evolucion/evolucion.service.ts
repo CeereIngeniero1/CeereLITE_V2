@@ -470,7 +470,7 @@ export class EvolucionService {
 
   private documentosRoot(): string {
     const root = path.resolve(
-      this.config.get<string>('DOCUMENTOS_PATH') ?? 'C:/CeereSio/Documentos',
+      this.config.getOrThrow<string>('DOCUMENTOS_PATH'),
     );
     if (!fs.existsSync(root)) {
       fs.mkdirSync(root, { recursive: true });

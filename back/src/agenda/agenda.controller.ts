@@ -8,17 +8,14 @@ import {
   Post,
   Query,
   Request,
-  UseGuards,
 } from '@nestjs/common';
 import type { Request as ExpressRequest } from 'express';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { JwtPayload } from '../auth/auth.service';
 import { AgendaService } from './agenda.service';
 import { CreateAgendaCitaDto } from './dto/create-agenda-cita.dto';
 import { UpdateAgendaCitaEstadoDto } from './dto/update-agenda-cita-estado.dto';
 
 @Controller('agenda')
-@UseGuards(JwtAuthGuard)
 export class AgendaController {
   constructor(private readonly agendaService: AgendaService) {}
 

@@ -7,7 +7,16 @@ import {
   useState,
 } from 'react';
 import * as api from '../api/client';
-import { clearStoredEmpresa, clearStoredHcDocumento, clearStoredToken, getStoredToken, setStoredToken } from '../config';
+import {
+  clearStoredEmpresa,
+  clearStoredHcDocumento,
+  clearStoredRefreshToken,
+  clearStoredToken,
+  getStoredRefreshToken,
+  getStoredToken,
+  setStoredRefreshToken,
+  setStoredToken,
+} from '../config';
 
 const AuthContext = createContext(null);
 
@@ -18,7 +27,8 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const token = getStoredToken();
-    if (!token) {
+    const refreshToken = getStoredRefreshToken();
+    if (!token && !refreshToken) {
       setHydrated(true);
       return;
     }
@@ -28,9 +38,6 @@ export function AuthProvider({ children }) {
       .then((me) => setUser(me))
       .catch((e) => {
         if (e.response?.status === 401) {
-          clearStoredToken();
-          clearStoredEmpresa();
-          clearStoredHcDocumento();
           setUser(null);
         }
       })
@@ -42,6 +49,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(() => {
     clearStoredToken();
+    clearStoredRefreshToken();
     clearStoredEmpresa();
     clearStoredHcDocumento();
     setUser(null);
@@ -52,6 +60,7 @@ export function AuthProvider({ children }) {
     clearStoredEmpresa();
     clearStoredHcDocumento();
     setStoredToken(data.token);
+    setStoredRefreshToken(data.refreshToken);
     try {
       const me = await api.fetchMe();
       setUser(me);

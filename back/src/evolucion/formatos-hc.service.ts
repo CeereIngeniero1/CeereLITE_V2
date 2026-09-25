@@ -31,15 +31,13 @@ export class FormatosHcService {
   constructor(private readonly config: ConfigService) {}
 
   private rootDir(): string {
-    return path.resolve(
-      this.config.get<string>('FORMATOS_HC_PATH') ?? 'C:/CeereSio/Formatos HC',
-    );
+    return path.resolve(this.config.getOrThrow<string>('FORMATOS_HC_PATH'));
   }
 
   private publicAssetBase(): string {
-    const api = (
-      this.config.get<string>('API_PUBLIC_BASE_URL') ?? 'http://localhost:3001'
-    ).replace(/\/$/, '');
+    const api = this.config
+      .getOrThrow<string>('API_PUBLIC_BASE_URL')
+      .replace(/\/$/, '');
     return `${api}/formatos-hc/`;
   }
 
@@ -77,12 +75,10 @@ export class FormatosHcService {
       fileDirs: {
         formatosHc: this.dirFileUrl(this.rootDir()),
         firmaEntidad: this.dirFileUrl(
-          this.config.get<string>('FIRMA_ENTIDAD_PATH') ??
-            'C:/CeereSio/Firma Entidad',
+          this.config.getOrThrow<string>('FIRMA_ENTIDAD_PATH'),
         ),
         fotoEntidad: this.dirFileUrl(
-          this.config.get<string>('STATIC_IMAGES_PATH') ??
-            'C:/CeereSio/Foto Entidad',
+          this.config.getOrThrow<string>('STATIC_IMAGES_PATH'),
         ),
       },
     };
