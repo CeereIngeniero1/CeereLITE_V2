@@ -2,26 +2,18 @@ import axios from 'axios';
 import {
   API_ORIGIN,
   API_V1,
+  clearLegacyAuthTokens,
   clearStoredEmpresa,
   clearStoredHcDocumento,
-  clearStoredRefreshToken,
-  clearStoredToken,
-  getStoredRefreshToken,
-  getStoredToken,
-  setStoredRefreshToken,
-  setStoredToken,
 } from '../config.js';
 
 export const api = axios.create({
   baseURL: API_V1,
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 });
 
 api.interceptors.request.use((config) => {
-  const token = getStoredToken();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
   if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
     const headers = config.headers;
     if (headers && typeof headers.delete === 'function') {
@@ -47,9 +39,12 @@ function isRefreshRequest(config) {
   return requestUrl(config).includes('/auth/refresh');
 }
 
+function isLogoutRequest(config) {
+  return requestUrl(config).includes('/auth/logout');
+}
+
 function forceLogout() {
-  clearStoredToken();
-  clearStoredRefreshToken();
+  clearLegacyAuthTokens();
   clearStoredEmpresa();
   clearStoredHcDocumento();
   if (typeof window === 'undefined') return;
@@ -60,14 +55,11 @@ function forceLogout() {
 }
 
 async function refreshSession() {
-  const refreshToken = getStoredRefreshToken();
-  if (!refreshToken) {
-    throw new Error('Sin refresh token');
-  }
-  const { data } = await axios.post(`${API_V1}/auth/refresh`, { refreshToken });
-  setStoredToken(data.token);
-  setStoredRefreshToken(data.refreshToken);
-  return data.token;
+  await axios.post(
+    `${API_V1}/auth/refresh`,
+    {},
+    { withCredentials: true },
+  );
 }
 
 api.interceptors.response.use(
@@ -77,7 +69,11 @@ api.interceptors.response.use(
     if (!original || err.response?.status !== 401) {
       return Promise.reject(err);
     }
-    if (isLoginRequest(original)) {
+    if (
+      isLoginRequest(original) ||
+      isLogoutRequest(original) ||
+      requestUrl(original).includes('/logs/cliente')
+    ) {
       return Promise.reject(err);
     }
     if (isRefreshRequest(original) || original._retry) {
@@ -91,9 +87,7 @@ api.interceptors.response.use(
           refreshInFlight = null;
         });
       }
-      const token = await refreshInFlight;
-      original.headers = original.headers ?? {};
-      original.headers.Authorization = `Bearer ${token}`;
+      await refreshInFlight;
       return api.request(original);
     } catch {
       forceLogout();
@@ -105,6 +99,35 @@ api.interceptors.response.use(
 export async function login(username, password) {
   const { data } = await api.post('/auth/login', { username, password });
   return data;
+}
+
+export async function logoutSession() {
+  try {
+    await api.post('/auth/logout');
+  } catch {
+    /* las cookies se borran igual en el servidor si respondió */
+  }
+}
+
+export async function reportClientError(payload) {
+  try {
+    await api.post('/logs/cliente', payload);
+  } catch {
+    /* el log no debe romper la UI */
+  }
+}
+
+export async function downloadPrintPdf(html) {
+  const res = await api.post(
+    '/print/pdf',
+    { html },
+    { responseType: 'blob' },
+  );
+  const blob = res.data;
+  if (blob?.type && String(blob.type).includes('application/json')) {
+    throw new Error('PDF no disponible');
+  }
+  return blob;
 }
 
 export async function fetchMe() {
@@ -141,7 +164,9 @@ export async function fetchUsers() {
 }
 
 export async function fetchHealthDb() {
-  const { data } = await axios.get(`${API_ORIGIN}/health/db`);
+  const { data } = await axios.get(`${API_ORIGIN}/health/db`, {
+    withCredentials: true,
+  });
   return data;
 }
 
@@ -456,6 +481,67 @@ export async function fetchAgendaProcedimientos(q) {
   const { data } = await api.get('/agenda/procedimientos', {
     params: q ? { q } : {},
   });
+  return data;
+}
+
+/** @param {string} documentoEmpresa */
+export async function fetchPresupuestoSiguienteNumero(documentoEmpresa) {
+  const { data } = await api.get('/facturacion/siguiente-numero', {
+    params: { documentoEmpresa },
+  });
+  return data;
+}
+
+/** @param {string} documentoEmpresa */
+export async function fetchPresupuestoTratamientos(documentoEmpresa) {
+  const { data } = await api.get('/facturacion/tratamientos', {
+    params: { documentoEmpresa },
+  });
+  return data;
+}
+
+/** @param {string} documentoEmpresa */
+export async function fetchPresupuestoTarifas(documentoEmpresa) {
+  const { data } = await api.get('/facturacion/tarifas', {
+    params: { documentoEmpresa },
+  });
+  return data;
+}
+
+/**
+ * @param {number|string} idTratamiento
+ * @param {string} documentoEmpresa
+ * @param {number|string} [idTipoTarifa]
+ */
+export async function fetchPresupuestoItems(
+  idTratamiento,
+  documentoEmpresa,
+  idTipoTarifa,
+) {
+  const { data } = await api.get(
+    `/facturacion/tratamientos/${encodeURIComponent(idTratamiento)}/items`,
+    {
+      params: {
+        documentoEmpresa,
+        ...(idTipoTarifa ? { idTipoTarifa } : {}),
+      },
+    },
+  );
+  return data;
+}
+
+/**
+ * @param {number|string} idTratamiento
+ * @param {string} [documentoEmpresa]
+ */
+export async function fetchPresupuestoProfesionales(
+  idTratamiento,
+  documentoEmpresa,
+) {
+  const { data } = await api.get(
+    `/facturacion/tratamientos/${encodeURIComponent(idTratamiento)}/profesionales`,
+    { params: { documentoEmpresa } },
+  );
   return data;
 }
 

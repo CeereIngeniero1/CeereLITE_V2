@@ -7,6 +7,7 @@ import { AppLayout } from './layout/AppLayout';
 import LoginPage from './pages/LoginPage';
 import HomePage from './pages/HomePage';
 import PlaceholderPage from './pages/PlaceholderPage';
+import FacturacionPage from './pages/FacturacionPage';
 import UsuariosPage from './pages/UsuariosPage';
 import EvolucionPage from './pages/EvolucionPage';
 import AgendaPage from './pages/AgendaPage';
@@ -36,12 +37,7 @@ export default function App() {
               <Route path="/principal/empresa" element={<EmpresaPage />} />
               <Route
                 path="/principal/facturacion"
-                element={
-                  <PlaceholderPage
-                    title="Facturación"
-                    hint="Flujo de facturas y resoluciones."
-                  />
-                }
+                element={<FacturacionPage />}
               />
               <Route
                 path="/principal/agregar-resolucion"

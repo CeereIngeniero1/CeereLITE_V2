@@ -32,6 +32,9 @@
   Agenda:    AgendaCitas, AgendaProfesional, AgendaTipoCompromiso,
              AgendaProcedimientos, AgendaCitaProcedimientos,
              AgendaPrimaria, AgendaSecundaria
+  Presupuesto: PresupuestoTratamiento, PresupuestoTipoTarifa,
+               PresupuestoTratamientoItems, PresupuestoPrecioVenta,
+               PresupuestoProfesionalTratamiento, PresupuestoNro
 
   No van aquí (objetos nativos de Ceere; deben existir en la clínica)
   -------------------------------------------------------------------
@@ -827,5 +830,116 @@ LEFT JOIN dbo.Entidad AS ep
   ON LTRIM(RTRIM(v.[Documento Entidad Primaria])) = LTRIM(RTRIM(ep.[Documento Entidad]))
 WHERE ISNULL(v.[Id Estado], 0) = 7
   AND ISNULL(c.[Id Estado], 0) = 7;
+GO
+
+-- =============================================================================
+-- Lite Cnsta PresupuestoTratamiento
+-- Catálogo dbo.Tratamiento por sede. Estado 7 = Activado.
+-- Usado por: GET /api/v1/facturacion/tratamientos?documentoEmpresa=
+--
+-- Nest:
+--   SELECT IdTratamiento, CodigoTratamiento, DescripcionTratamiento, IdSubcapitulo
+--   FROM dbo.[Lite Cnsta PresupuestoTratamiento]
+--   WHERE DocumentoEmpresa = @0
+--   ORDER BY DescripcionTratamiento
+-- =============================================================================
+CREATE OR ALTER VIEW dbo.[Lite Cnsta PresupuestoTratamiento]
+AS
+SELECT t.[Id Tratamiento] AS IdTratamiento,
+       t.[Código Tratamiento] AS CodigoTratamiento,
+       t.[Descripción Tratamiento] AS DescripcionTratamiento,
+       t.[Id Subcapítulo] AS IdSubcapitulo,
+       LTRIM(RTRIM(t.[Documento Empresa])) AS DocumentoEmpresa
+FROM dbo.Tratamiento AS t
+WHERE ISNULL(t.[Id Estado], 0) = 7;
+GO
+
+-- =============================================================================
+-- Lite Cnsta PresupuestoTipoTarifa
+-- dbo.[Tipo Tarifa] por sede. Id Estado Tarifas 7 = Activado.
+-- Usado por: GET /api/v1/facturacion/tarifas?documentoEmpresa=
+-- =============================================================================
+CREATE OR ALTER VIEW dbo.[Lite Cnsta PresupuestoTipoTarifa]
+AS
+SELECT tt.[Id Tipo Tarifa] AS IdTipoTarifa,
+       ISNULL(
+         NULLIF(LTRIM(RTRIM(tt.[Descripción Tipo Tarifa])), N''),
+         ISNULL(LTRIM(RTRIM(tt.[Tipo Tarifa])), N'')
+       ) AS NombreTarifa,
+       LTRIM(RTRIM(tt.[Documento Empresa])) AS DocumentoEmpresa
+FROM dbo.[Tipo Tarifa] AS tt
+WHERE ISNULL(tt.[Id Estado Tarifas], 0) = 7;
+GO
+
+-- =============================================================================
+-- Lite Cnsta PresupuestoTratamientoItems
+-- dbo.[Tratamiento Items] + dbo.Objeto (nombres).
+-- Usado por: GET /api/v1/facturacion/tratamientos/:id/items
+-- =============================================================================
+CREATE OR ALTER VIEW dbo.[Lite Cnsta PresupuestoTratamientoItems]
+AS
+SELECT i.[Id Tratamiento] AS IdTratamiento,
+       LTRIM(RTRIM(t.[Documento Empresa])) AS DocumentoEmpresa,
+       LTRIM(RTRIM(i.[Código Objeto])) AS CodigoObjeto,
+       o.[Descripción Objeto] AS DescripcionObjeto,
+       i.[Orden Tratamiento Items] AS Orden
+FROM dbo.[Tratamiento Items] AS i
+INNER JOIN dbo.Tratamiento AS t
+  ON i.[Id Tratamiento] = t.[Id Tratamiento]
+LEFT JOIN dbo.Objeto AS o
+  ON LTRIM(RTRIM(i.[Código Objeto])) = LTRIM(RTRIM(o.[Código Objeto]));
+GO
+
+-- =============================================================================
+-- Lite Cnsta PresupuestoPrecioVenta
+-- dbo.[Precio de Venta] por objeto + empresa + tipo tarifa.
+-- JOIN en Nest con items (IdTipoTarifa de la fila).
+-- =============================================================================
+CREATE OR ALTER VIEW dbo.[Lite Cnsta PresupuestoPrecioVenta]
+AS
+SELECT LTRIM(RTRIM(pv.[Código Objeto])) AS CodigoObjeto,
+       LTRIM(RTRIM(pv.[Documento Empresa])) AS DocumentoEmpresa,
+       pv.[Id Tipo Tarifa] AS IdTipoTarifa,
+       ISNULL(pv.[Precio de Venta], 0) AS Precio,
+       ISNULL(iva.[Descripción Iva], 0) AS IvaPct,
+       ISNULL(pv.[Descuento por defecto Precio de Venta], 0) AS DescPct
+FROM dbo.[Precio de Venta] AS pv
+LEFT JOIN dbo.Iva AS iva
+  ON pv.[Id Iva] = iva.[Id Iva];
+GO
+
+-- =============================================================================
+-- Lite Cnsta PresupuestoProfesionalTratamiento
+-- Especialidad (Id Subcapítulo) + Empresa Por Entidad (documento catálogo).
+-- Usado por: GET /api/v1/facturacion/tratamientos/:id/profesionales
+-- =============================================================================
+CREATE OR ALTER VIEW dbo.[Lite Cnsta PresupuestoProfesionalTratamiento]
+AS
+SELECT DISTINCT
+       t.[Id Tratamiento] AS IdTratamiento,
+       t.[Id Subcapítulo] AS IdSubcapitulo,
+       LTRIM(RTRIM(epe.[Documento Empresa])) AS DocumentoEmpresa,
+       LTRIM(RTRIM(e.[Documento Entidad])) AS DocumentoProfesional,
+       LTRIM(RTRIM(ent.[Nombre Completo Entidad])) AS NombreProfesional
+FROM dbo.Tratamiento AS t
+INNER JOIN dbo.[Especialidad Contratada Por Entidad] AS e
+  ON t.[Id Subcapítulo] = e.[Id Subcapítulo]
+INNER JOIN dbo.[Empresa Por Entidad] AS epe
+  ON LTRIM(RTRIM(e.[Documento Entidad])) = LTRIM(RTRIM(epe.[Documento Entidad]))
+INNER JOIN dbo.Entidad AS ent
+  ON LTRIM(RTRIM(e.[Documento Entidad])) = LTRIM(RTRIM(ent.[Documento Entidad]));
+GO
+
+-- =============================================================================
+-- Lite Cnsta PresupuestoNro
+-- Consecutivo [Nro Plan de Tratamiento] por empresa/sede.
+-- Nest: MAX(Nro) + 1 WHERE DocumentoEmpresa o DocumentoSede = @empresa
+-- =============================================================================
+CREATE OR ALTER VIEW dbo.[Lite Cnsta PresupuestoNro]
+AS
+SELECT LTRIM(RTRIM(p.[Documento Empresa])) AS DocumentoEmpresa,
+       LTRIM(RTRIM(p.[Documento Sede])) AS DocumentoSede,
+       TRY_CAST(p.[Nro Plan de Tratamiento] AS int) AS Nro
+FROM dbo.[Plan de Tratamiento] AS p;
 GO
 

@@ -12,6 +12,9 @@ import { CompanyModule } from './company/company.module';
 import { EvolucionModule } from './evolucion/evolucion.module';
 import { AgendaModule } from './agenda/agenda.module';
 import { RdaModule } from './rda/rda.module';
+import { LogsModule } from './logging/logs.module';
+import { PrintModule } from './print/print.module';
+import { FacturacionModule } from './facturacion/facturacion.module';
 
 @Module({
   imports: [
@@ -62,6 +65,9 @@ import { RdaModule } from './rda/rda.module';
     EvolucionModule,
     AgendaModule,
     RdaModule,
+    LogsModule,
+    PrintModule,
+    FacturacionModule,
   ],
 })
 export class AppModule {}

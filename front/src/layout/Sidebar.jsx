@@ -49,6 +49,10 @@ export function Sidebar() {
     location.pathname.startsWith('/principal/agenda') ||
     location.pathname.startsWith('/principal/programaciones');
   const hcActive = location.pathname.startsWith('/principal/evolucion');
+  const facturaActive =
+    location.pathname.startsWith('/principal/facturacion') ||
+    location.pathname.startsWith('/principal/agregar-resolucion') ||
+    location.pathname.startsWith('/principal/agregar-productos');
 
   function toggleSidebar() {
     setOpen((v) => {
@@ -157,7 +161,7 @@ export function Sidebar() {
         <div className="sidebar-submenu-wrap">
           <button
             type="button"
-            className={`sidebar-link sidebar-submenu-head ${facturaOpen ? 'active' : ''}`}
+            className={`sidebar-link sidebar-submenu-head ${facturaActive || facturaOpen ? 'active' : ''}`}
             onClick={() => setFacturaOpen((v) => !v)}
           >
             <span className="sidebar-link-icon">$</span>
@@ -172,7 +176,7 @@ export function Sidebar() {
                   `sidebar-sublink${isActive ? ' active' : ''}`
                 }
               >
-                Crear factura
+                Presupuesto
               </NavLink>
               <NavLink
                 to="/principal/agregar-resolucion"

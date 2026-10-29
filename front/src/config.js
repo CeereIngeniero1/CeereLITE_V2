@@ -38,6 +38,12 @@ export function clearStoredRefreshToken() {
   localStorage.removeItem(REFRESH_KEY);
 }
 
+/** Tokens viejos en localStorage; la sesión ahora va en cookies HttpOnly. */
+export function clearLegacyAuthTokens() {
+  clearStoredToken();
+  clearStoredRefreshToken();
+}
+
 const EMPRESA_KEY = 'ceere.empresa';
 
 export function getStoredEmpresa() {

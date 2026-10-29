@@ -1,5 +1,6 @@
-/** Imprime un HTML en un iframe about:blank (sin blob URL en el pie del navegador). */
-export function printHtmlDocument(html, options = {}) {
+import { downloadPrintPdf } from '../api/client';
+
+function printHtmlFallback(html, options = {}) {
   const revokeUrls = [...(options.revokeUrls ?? [])];
   return new Promise((resolve) => {
     const iframe = document.createElement('iframe');
@@ -36,7 +37,11 @@ export function printHtmlDocument(html, options = {}) {
     function hasPrintableContent(doc) {
       if (!doc?.body) return false;
       if (doc.body.innerText?.trim()) return true;
-      if (doc.querySelector('input, textarea, select, .formato-body, .hc-formato-host')) {
+      if (
+        doc.querySelector(
+          'input, textarea, select, .formato-body, .hc-formato-host',
+        )
+      ) {
         return true;
       }
       return false;
@@ -114,4 +119,34 @@ export function printHtmlDocument(html, options = {}) {
       iframe.addEventListener('load', writeAndPrint, { once: true });
     }
   });
+}
+
+function savePdfBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName || 'documento.pdf';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/** Intenta PDF del API; si falla, abre el diálogo de impresión. */
+export async function printHtmlDocument(html, options = {}) {
+  try {
+    const blob = await downloadPrintPdf(html);
+    savePdfBlob(blob, options.fileName || 'documento.pdf');
+    for (const url of options.revokeUrls ?? []) {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        /* ignore */
+      }
+    }
+    return true;
+  } catch {
+    return printHtmlFallback(html, options);
+  }
 }

@@ -5,32 +5,64 @@ import {
   Post,
   Body,
   Request,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Request as ExpressRequest } from 'express';
+import { ConfigService } from '@nestjs/config';
+import type { Request as ExpressRequest, Response } from 'express';
 import { AuthService, JwtPayload } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { Public } from './public.decorator';
 import type { UploadedFotoFile } from '../entidad-foto';
+import {
+  REFRESH_COOKIE,
+  clearAuthCookies,
+  sessionPublicFields,
+  setAuthCookies,
+} from './auth-cookies';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly config: ConfigService,
+  ) {}
 
   @Public()
   @Post('login')
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  async login(
+    @Body() dto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const issued = await this.authService.login(dto);
+    setAuthCookies(res, issued.token, issued.refreshToken, this.config);
+    return sessionPublicFields(issued);
   }
 
   @Public()
   @Post('refresh')
-  refresh(@Body() dto: RefreshDto) {
-    return this.authService.refresh(dto.refreshToken);
+  async refresh(
+    @Body() dto: RefreshDto,
+    @Request() req: ExpressRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const raw =
+      String(dto.refreshToken ?? '').trim() ||
+      String(req.cookies?.[REFRESH_COOKIE] ?? '').trim();
+    const issued = await this.authService.refresh(raw);
+    setAuthCookies(res, issued.token, issued.refreshToken, this.config);
+    return sessionPublicFields(issued);
+  }
+
+  @Public()
+  @Post('logout')
+  logout(@Res({ passthrough: true }) res: Response) {
+    clearAuthCookies(res, this.config);
+    return { ok: true };
   }
 
   @Get('me')

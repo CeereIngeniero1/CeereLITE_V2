@@ -8,14 +8,9 @@ import {
 } from 'react';
 import * as api from '../api/client';
 import {
+  clearLegacyAuthTokens,
   clearStoredEmpresa,
   clearStoredHcDocumento,
-  clearStoredRefreshToken,
-  clearStoredToken,
-  getStoredRefreshToken,
-  getStoredToken,
-  setStoredRefreshToken,
-  setStoredToken,
 } from '../config';
 
 const AuthContext = createContext(null);
@@ -26,12 +21,7 @@ export function AuthProvider({ children }) {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    const token = getStoredToken();
-    const refreshToken = getStoredRefreshToken();
-    if (!token && !refreshToken) {
-      setHydrated(true);
-      return;
-    }
+    clearLegacyAuthTokens();
     setLoading(true);
     api
       .fetchMe()
@@ -48,8 +38,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(() => {
-    clearStoredToken();
-    clearStoredRefreshToken();
+    void api.logoutSession();
+    clearLegacyAuthTokens();
     clearStoredEmpresa();
     clearStoredHcDocumento();
     setUser(null);
@@ -59,8 +49,6 @@ export function AuthProvider({ children }) {
     const data = await api.login(username, password);
     clearStoredEmpresa();
     clearStoredHcDocumento();
-    setStoredToken(data.token);
-    setStoredRefreshToken(data.refreshToken);
     try {
       const me = await api.fetchMe();
       setUser(me);
