@@ -5,6 +5,7 @@ import {
   messageFromAxiosError,
   updatePacienteObservacion,
 } from '../api/client';
+import { useAlerts } from '../alerts/AlertContext';
 
 function formatFechaObs(value) {
   if (!value) return '—';
@@ -27,6 +28,7 @@ export function HcObservacionesModal({
   nombrePaciente,
   onClose,
 }) {
+  const { notifyOk, notifyError } = useAlerts();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -112,7 +114,9 @@ export function HcObservacionesModal({
   async function guardarDetalle() {
     const texto = detailText.trim();
     if (!texto) {
-      setError('La observación no puede estar vacía.');
+      const msg = 'La observación no puede estar vacía.';
+      setError(msg);
+      notifyError(msg);
       return;
     }
     setSaving(true);
@@ -122,21 +126,26 @@ export function HcObservacionesModal({
       if (detail?.mode === 'new') {
         await createPacienteObservacion(documentoPaciente, texto);
         setOkMessage('Observación creada.');
+        notifyOk('Observación creada.');
       } else {
         await updatePacienteObservacion(documentoPaciente, detail.item.id, {
           observacion: texto,
           idEstado: Number(detailEstado) === 8 ? 8 : 7,
         });
         setOkMessage('Observación actualizada.');
+        notifyOk('Observación actualizada.');
       }
       await loadItems();
       setDetail(null);
       setDetailText('');
       setDetailEstado(7);
     } catch (e) {
-      setError(
-        await messageFromAxiosError(e, 'No se pudo guardar la observación'),
+      const msg = await messageFromAxiosError(
+        e,
+        'No se pudo guardar la observación',
       );
+      setError(msg);
+      notifyError(msg);
     } finally {
       setSaving(false);
     }

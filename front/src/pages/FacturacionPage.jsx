@@ -9,8 +9,10 @@ import {
   fetchPresupuestoTratamientos,
   messageFromAxiosError,
 } from '../api/client';
+import { useAlerts } from '../alerts/AlertContext';
 import { useAuth } from '../auth/AuthContext';
 import { useCompany } from '../auth/CompanyContext';
+import { NumericInput } from '../components/NumericInput';
 import { PersonaBuscarModal } from '../components/PersonaBuscarModal';
 import { TabPanel, Tabs } from '../components/Tabs';
 import {
@@ -27,7 +29,6 @@ import {
   formatMoney,
   lineaKey,
   mergeLineasDesdeItems,
-  parseMoneyDraft,
   pctFromPesos,
   pesosEnLetras,
   pesosFromPct,
@@ -69,42 +70,15 @@ function SearchField({ value, onSearch, disabled, placeholder = '' }) {
   );
 }
 
-function MoneyInput({ value, onChange, className = '' }) {
-  const [focused, setFocused] = useState(false);
-  const [draft, setDraft] = useState('');
-  const n = Number(value) || 0;
-  const display = focused ? draft : String(n);
-
-  return (
-    <input
-      className={className}
-      type="text"
-      inputMode="decimal"
-      autoComplete="off"
-      value={display}
-      onFocus={() => {
-        setFocused(true);
-        setDraft(n === 0 ? '' : String(n));
-      }}
-      onChange={(e) => {
-        const parsed = parseMoneyDraft(e.target.value);
-        setDraft(parsed.text);
-        onChange(parsed.number);
-      }}
-      onBlur={() => {
-        const parsed = parseMoneyDraft(draft);
-        setFocused(false);
-        setDraft('');
-        onChange(parsed.number);
-      }}
-    />
-  );
+function MoneyInput(props) {
+  return <NumericInput {...props} />;
 }
 
 export default function FacturacionPage() {
   const navigate = useNavigate();
   const { documentoEmpresa, nombreComercialEmpresa } = useCompany();
   const { user } = useAuth();
+  const { notifyError } = useAlerts();
   const [tab, setTab] = useState('tratamiento');
   const [form, setForm] = useState(emptyPresupuestoForm);
   const [picker, setPicker] = useState(null);
@@ -200,12 +174,12 @@ export default function FacturacionPage() {
         if (!cancel) {
           setCatalogo([]);
           setTarifas([]);
-          setAviso(
-            await messageFromAxiosError(
-              e,
-              'No se pudieron cargar tratamientos y tarifas de la sede.',
-            ),
+          const msg = await messageFromAxiosError(
+            e,
+            'No se pudieron cargar tratamientos y tarifas de la sede.',
           );
+          setAviso(msg);
+          notifyError(msg);
         }
       } finally {
         if (!cancel) setCargandoCatalogo(false);
@@ -288,12 +262,12 @@ export default function FacturacionPage() {
       }
       setAviso('');
     } catch (e) {
-      setAviso(
-        await messageFromAxiosError(
-          e,
-          'No se pudieron cargar procedimientos, profesionales o tarifas.',
-        ),
+      const msg = await messageFromAxiosError(
+        e,
+        'No se pudieron cargar procedimientos, profesionales o tarifas.',
       );
+      setAviso(msg);
+      notifyError(msg);
     } finally {
       setCargandoSel((s) => ({ ...s, [id]: false }));
     }
@@ -306,9 +280,12 @@ export default function FacturacionPage() {
     try {
       await cargarDetalleTratamiento(id, idTipoTarifa);
     } catch (e) {
-      setAviso(
-        await messageFromAxiosError(e, 'No se pudieron actualizar los precios.'),
+      const msg = await messageFromAxiosError(
+        e,
+        'No se pudieron actualizar los precios.',
       );
+      setAviso(msg);
+      notifyError(msg);
     } finally {
       setCargandoSel((s) => ({ ...s, [id]: false }));
     }
@@ -316,6 +293,7 @@ export default function FacturacionPage() {
 
   function noDisponible() {
     setAviso(AVISO_SIN_PERSISTIR);
+    notifyError(AVISO_SIN_PERSISTIR);
   }
 
   async function onPickPersona(persona) {

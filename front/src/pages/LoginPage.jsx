@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAlerts } from '../alerts/AlertContext';
 import { useAuth } from '../auth/AuthContext';
 import { fetchHealthDb } from '../api/client';
 import { BrandLockup } from '../components/BrandLogo';
 
 export default function LoginPage() {
   const { login, isAuthenticated, hydrated } = useAuth();
+  const { notifyError } = useAlerts();
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -42,7 +44,9 @@ export default function LoginPage() {
         err.response?.data?.message ??
         err.response?.data?.error ??
         'Credenciales incorrectas';
-      setError(typeof msg === 'string' ? msg : 'Error al iniciar sesión');
+      const text = typeof msg === 'string' ? msg : 'Error al iniciar sesión';
+      setError(text);
+      notifyError(text);
     }
   }
 

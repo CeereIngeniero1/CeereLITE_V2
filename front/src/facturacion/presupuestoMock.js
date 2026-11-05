@@ -307,12 +307,7 @@ export function emptyPresupuestoForm() {
   };
 }
 
-export function parseMoneyDraft(raw) {
-  const digits = String(raw ?? '').replace(/[^\d]/g, '');
-  if (!digits) return { text: '', number: 0 };
-  const text = digits.replace(/^0+(?=\d)/, '');
-  return { text, number: Number(text) || 0 };
-}
+export { parseMoneyDraft } from '../numericDraft';
 
 export function calcTotales(form) {
   let subtotal = 0;

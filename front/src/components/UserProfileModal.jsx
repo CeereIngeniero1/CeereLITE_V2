@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchMe, updateMe, uploadMeFoto } from '../api/client';
+import { useAlerts } from '../alerts/AlertContext';
 import { useAuth } from '../auth/AuthContext';
 
 function initialsFrom(name, username) {
@@ -38,6 +39,7 @@ function profileToForm(me, prev) {
 
 export function UserProfileModal({ onClose }) {
   const { user, applyUser } = useAuth();
+  const { notifyOk, notifyError } = useAlerts();
   const [form, setForm] = useState(() =>
     profileToForm(user, {
       primerNombre: '',
@@ -113,7 +115,9 @@ export function UserProfileModal({ onClose }) {
     setError('');
     setOk('');
     if (!file.type.startsWith('image/')) {
-      setError('Seleccione un archivo de imagen');
+      const msg = 'Seleccione un archivo de imagen';
+      setError(msg);
+      notifyError(msg);
       return;
     }
     setFotoBusy(true);
@@ -122,13 +126,16 @@ export function UserProfileModal({ onClose }) {
       applyUser(me);
       setMeta(profileToMeta(me));
       setOk('Foto actualizada');
+      notifyOk('Foto actualizada.');
     } catch (err) {
       const msg =
         err.response?.data?.message ??
         err.response?.data?.error ??
         err.message ??
         'No se pudo guardar la foto';
-      setError(Array.isArray(msg) ? msg.join('. ') : String(msg));
+      const text = Array.isArray(msg) ? msg.join('. ') : String(msg);
+      setError(text);
+      notifyError(text);
     } finally {
       setFotoBusy(false);
     }
@@ -139,11 +146,15 @@ export function UserProfileModal({ onClose }) {
     setError('');
     setOk('');
     if (form.newPassword && form.newPassword !== form.confirmPassword) {
-      setError('La confirmación de la nueva contraseña no coincide');
+      const msg = 'La confirmación de la nueva contraseña no coincide';
+      setError(msg);
+      notifyError(msg);
       return;
     }
     if (form.newPassword && !form.currentPassword) {
-      setError('Indique la contraseña actual para cambiarla');
+      const msg = 'Indique la contraseña actual para cambiarla';
+      setError(msg);
+      notifyError(msg);
       return;
     }
     setSaving(true);
@@ -177,13 +188,16 @@ export function UserProfileModal({ onClose }) {
         }),
       );
       setOk('Datos actualizados');
+      notifyOk('Datos actualizados.');
     } catch (err) {
       const msg =
         err.response?.data?.message ??
         err.response?.data?.error ??
         err.message ??
         'No se pudo guardar';
-      setError(Array.isArray(msg) ? msg.join('. ') : String(msg));
+      const text = Array.isArray(msg) ? msg.join('. ') : String(msg);
+      setError(text);
+      notifyError(text);
     } finally {
       setSaving(false);
     }

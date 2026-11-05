@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useAlerts } from '../alerts/AlertContext';
 import { useCompany } from '../auth/CompanyContext';
 
 export default function EmpresaPage() {
@@ -10,10 +11,16 @@ export default function EmpresaPage() {
     catalogError,
   } = useCompany();
   const [ok, setOk] = useState('');
+  const { notifyOk, notifyError } = useAlerts();
+
+  useEffect(() => {
+    if (catalogError) notifyError(catalogError);
+  }, [catalogError, notifyError]);
 
   function onPick(row) {
     setEmpresa(row);
     setOk('Empresa de trabajo actualizada.');
+    notifyOk('Empresa de trabajo actualizada.');
   }
 
   return (

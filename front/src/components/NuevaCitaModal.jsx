@@ -8,8 +8,10 @@ import {
   messageFromAxiosError,
   updateAgendaCita,
 } from '../api/client';
+import { useAlerts } from '../alerts/AlertContext';
 import { AgendaDisponibilidadPanel } from './AgendaDisponibilidadPanel';
 import { AgendaHistorialPrintModal } from './AgendaHistorialPrintModal';
+import { NumericInput } from './NumericInput';
 import { PatientEditModal } from './PatientEditModal';
 import { TabPanel, Tabs } from './Tabs';
 
@@ -126,18 +128,10 @@ export function TablaProcedimientos({ rows, onQuitar, onTiempoChange }) {
                 <td className="td-mono">{p.codigo}</td>
                 <td>
                   {onTiempoChange ? (
-                    <input
+                    <NumericInput
                       className="hc-input agenda-proc-tiempo"
-                      type="number"
-                      min={0}
-                      step={5}
                       value={p.tiempoMinutos ?? 0}
-                      onChange={(e) =>
-                        onTiempoChange(
-                          p.codigo,
-                          Math.max(0, Number(e.target.value) || 0),
-                        )
-                      }
+                      onChange={(v) => onTiempoChange(p.codigo, v)}
                     />
                   ) : (
                     p.tiempoMinutos ?? 0
@@ -253,6 +247,7 @@ export function NuevaCitaModal({
   onClose,
   onCreated,
 }) {
+  const { notifyOk, notifyError } = useAlerts();
   const esEdicion = Boolean(citaInicial?.idCita);
   const [tab, setTab] = useState('cita');
   const [fechaCita, setFechaCita] = useState(
@@ -433,17 +428,23 @@ export function NuevaCitaModal({
 
   async function guardar() {
     if (!documentoPaciente) {
-      setError('Seleccione un paciente.');
+      const msg = 'Seleccione un paciente.';
+      setError(msg);
+      notifyError(msg);
       setTab('cita');
       return;
     }
     if (!String(profesional?.documento ?? '').trim()) {
-      setError('No hay profesional para esta franja.');
+      const msg = 'No hay profesional para esta franja.';
+      setError(msg);
+      notifyError(msg);
       setTab('cita');
       return;
     }
     if (!String(documentoEmpresa ?? '').trim()) {
-      setError('Seleccione la empresa de trabajo.');
+      const msg = 'Seleccione la empresa de trabajo.';
+      setError(msg);
+      notifyError(msg);
       setTab('cita');
       return;
     }
@@ -451,7 +452,9 @@ export function NuevaCitaModal({
       motivo.trim() ||
       seleccionados.map((p) => p.descripcion || p.codigo).join(', ');
     if (!motivoFinal) {
-      setError('Indique el motivo o seleccione un procedimiento.');
+      const msg = 'Indique el motivo o seleccione un procedimiento.';
+      setError(msg);
+      notifyError(msg);
       setTab('cita');
       return;
     }
@@ -461,12 +464,16 @@ export function NuevaCitaModal({
     const iniMin = hmToMinutes(horaInicioEnvio);
     const finMin = hmToMinutes(horaFinEnvio);
     if (iniMin == null) {
-      setError('Indique la hora de inicio.');
+      const msg = 'Indique la hora de inicio.';
+      setError(msg);
+      notifyError(msg);
       setTab('cita');
       return;
     }
     if (finMin == null || finMin <= iniMin) {
-      setError('La hora de fin debe ser posterior a la de inicio.');
+      const msg = 'La hora de fin debe ser posterior a la de inicio.';
+      setError(msg);
+      notifyError(msg);
       setTab('cita');
       return;
     }
@@ -487,17 +494,19 @@ export function NuevaCitaModal({
       };
       if (esEdicion) {
         await updateAgendaCita(citaInicial.idCita, payload);
+        notifyOk('Cita actualizada.');
       } else {
         await createAgendaCita(payload);
+        notifyOk('Cita creada.');
       }
       onCreated(fechaCita);
     } catch (e) {
-      setError(
-        await messageFromAxiosError(
-          e,
-          esEdicion ? 'No se pudo guardar la cita' : 'No se pudo crear la cita',
-        ),
+      const msg = await messageFromAxiosError(
+        e,
+        esEdicion ? 'No se pudo guardar la cita' : 'No se pudo crear la cita',
       );
+      setError(msg);
+      notifyError(msg);
       setTab('cita');
     } finally {
       setSaving(false);

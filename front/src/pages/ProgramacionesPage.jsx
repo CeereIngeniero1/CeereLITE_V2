@@ -6,6 +6,7 @@ import {
   messageFromAxiosError,
   updateAgendaCitaEstado,
 } from '../api/client';
+import { useAlerts } from '../alerts/AlertContext';
 import { useCompany } from '../auth/CompanyContext';
 import {
   getStoredAgendaFecha,
@@ -132,6 +133,7 @@ export default function ProgramacionesPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { documentoEmpresa } = useCompany();
+  const { notifyOk, notifyError } = useAlerts();
   const [fecha, setFecha] = useState(() => {
     const fromState = String(location.state?.fecha ?? '').trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(fromState)) return fromState;
@@ -285,10 +287,11 @@ export default function ProgramacionesPage() {
             : c,
         ),
       );
+      notifyOk('Estado de la cita actualizado.');
     } catch (e) {
-      setError(
-        await messageFromAxiosError(e, 'No se pudo cambiar el estado'),
-      );
+      const msg = await messageFromAxiosError(e, 'No se pudo cambiar el estado');
+      setError(msg);
+      notifyError(msg);
     } finally {
       setSavingId(null);
     }

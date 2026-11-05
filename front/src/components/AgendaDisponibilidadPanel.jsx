@@ -6,11 +6,12 @@ import {
   messageFromAxiosError,
   updateAgendaCita,
 } from '../api/client';
+import { useAlerts } from '../alerts/AlertContext';
 
 const ESTADOS_CANCELADOS = new Set([60, 61, 62, 63, 64, 71]);
 const SLOT_INICIO = 6 * 60;
 const SLOT_PASO = 5;
-const CELDA_MIN = 30;
+const CELDA_MIN = 10;
 const GRID_FIN = 22 * 60;
 const GRID_MINUTOS = GRID_FIN - SLOT_INICIO;
 const SLOT_PX = 20;
@@ -36,10 +37,11 @@ function hmToMinutes(hm) {
 
 function buildHourLabels() {
   const labels = [];
-  for (let min = SLOT_INICIO; min <= GRID_FIN; min += 30) {
+  for (let min = SLOT_INICIO; min <= GRID_FIN; min += CELDA_MIN) {
     labels.push({
       hm: minutesToHm(min),
       top: ((min - SLOT_INICIO) / SLOT_PASO) * SLOT_PX,
+      hour: min % 60 === 0,
     });
   }
   return labels;
@@ -47,7 +49,7 @@ function buildHourLabels() {
 
 function buildGridMarks() {
   const marks = [];
-  for (let m = SLOT_INICIO; m <= GRID_FIN; m += 15) {
+  for (let m = SLOT_INICIO; m <= GRID_FIN; m += CELDA_MIN) {
     marks.push({
       top: ((m - SLOT_INICIO) / SLOT_PASO) * SLOT_PX,
       hour: m % 60 === 0,
@@ -180,6 +182,7 @@ export function AgendaDisponibilidadPanel({
   const [citas, setCitas] = useState([]);
   const [loading, setLoading] = useState(false);
   const [moving, setMoving] = useState(false);
+  const { notifyOk, notifyError } = useAlerts();
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -248,17 +251,23 @@ export function AgendaDisponibilidadPanel({
     if (disabled || moving) return;
     const idCita = Number(citaInicial?.idCita);
     if (!Number.isInteger(idCita) || idCita < 1) {
-      setError('Guarde la cita primero para cambiarla de profesional.');
+      const msg = 'Guarde la cita primero para cambiarla de profesional.';
+      setError(msg);
+      notifyError(msg);
       return;
     }
     const prof = String(docProfesional ?? '').trim();
     if (!prof) {
-      setError('Seleccione el profesional destino.');
+      const msg = 'Seleccione el profesional destino.';
+      setError(msg);
+      notifyError(msg);
       return;
     }
     const paciente = String(documentoPaciente ?? '').trim();
     if (!paciente) {
-      setError('Seleccione un paciente en la pestaña Cita.');
+      const msg = 'Seleccione un paciente en la pestaña Cita.';
+      setError(msg);
+      notifyError(msg);
       return;
     }
     const dur = durationMinutes(horaInicio, horaFin);
@@ -269,7 +278,9 @@ export function AgendaDisponibilidadPanel({
       String(motivo ?? '').trim() ||
       (procedimientos ?? []).map((p) => p.descripcion || p.codigo).join(', ');
     if (!motivoFinal) {
-      setError('Indique el motivo o seleccione un procedimiento.');
+      const msg = 'Indique el motivo o seleccione un procedimiento.';
+      setError(msg);
+      notifyError(msg);
       return;
     }
     setMoving(true);
@@ -290,11 +301,12 @@ export function AgendaDisponibilidadPanel({
           documentoEspacioOriginal ||
           undefined,
       });
+      notifyOk('Cita actualizada.');
       onMoved(fechaDisp);
     } catch (e) {
-      setError(
-        await messageFromAxiosError(e, 'No se pudo mover la cita'),
-      );
+      const msg = await messageFromAxiosError(e, 'No se pudo mover la cita');
+      setError(msg);
+      notifyError(msg);
     } finally {
       setMoving(false);
     }
@@ -372,11 +384,13 @@ export function AgendaDisponibilidadPanel({
                   {HOUR_LABELS.map((h, i) => (
                     <div
                       key={h.hm}
-                      className={
-                        i === 0
-                          ? 'agenda-hour-label agenda-hour-label--first'
-                          : 'agenda-hour-label'
-                      }
+                      className={[
+                        'agenda-hour-label',
+                        i === 0 ? 'agenda-hour-label--first' : '',
+                        h.hour ? 'agenda-hour-label--hour' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
                       style={{ top: h.top }}
                     >
                       {h.hm}

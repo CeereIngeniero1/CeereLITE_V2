@@ -17,7 +17,7 @@ import { getStoredAgendaFecha, setStoredAgendaFecha } from '../config';
 const ESTADOS_CANCELADOS = new Set([60, 61, 64, 71]);
 const SLOT_INICIO = 6 * 60;
 const SLOT_PASO = 5;
-const CELDA_MIN = 30;
+const CELDA_MIN = 10;
 const GRID_FIN = 22 * 60;
 const GRID_MINUTOS = GRID_FIN - SLOT_INICIO;
 const SLOT_PX = 20;
@@ -79,6 +79,7 @@ function buildHourLabels() {
     labels.push({
       hm: minutesToHm(min),
       top: ((min - SLOT_INICIO) / SLOT_PASO) * SLOT_PX,
+      hour: min % 60 === 0,
     });
   }
   return labels;
@@ -86,7 +87,7 @@ function buildHourLabels() {
 
 function buildGridMarks() {
   const marks = [];
-  for (let m = SLOT_INICIO; m <= GRID_FIN; m += 15) {
+  for (let m = SLOT_INICIO; m <= GRID_FIN; m += CELDA_MIN) {
     marks.push({
       top: ((m - SLOT_INICIO) / SLOT_PASO) * SLOT_PX,
       hour: m % 60 === 0,
@@ -576,11 +577,13 @@ export default function AgendaPage() {
                   {HOUR_LABELS.map((h, i) => (
                     <div
                       key={h.hm}
-                      className={
-                        i === 0
-                          ? 'agenda-hour-label agenda-hour-label--first'
-                          : 'agenda-hour-label'
-                      }
+                      className={[
+                        'agenda-hour-label',
+                        i === 0 ? 'agenda-hour-label--first' : '',
+                        h.hour ? 'agenda-hour-label--hour' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
                       style={{ top: h.top }}
                     >
                       {h.hm}

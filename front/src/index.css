@@ -330,6 +330,39 @@ button.secondary:hover:not(:disabled) {
   font-size: 0.9rem;
 }
 
+.swal2-container {
+  z-index: 6000;
+}
+
+.swal2-popup {
+  font-family: var(--font-sans);
+  background: var(--surface-card) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.swal2-title {
+  color: var(--text) !important;
+  font-size: 1.25rem !important;
+}
+
+.swal2-html-container {
+  color: var(--text-secondary) !important;
+}
+
+.swal2-styled.swal2-confirm {
+  background: var(--brand) !important;
+  color: var(--text-on-accent) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: none !important;
+}
+
+.swal2-styled.swal2-confirm:focus {
+  box-shadow: var(--focus-ring) !important;
+}
+
 .alert-error {
   background: var(--danger-bg);
   border: 1px solid var(--danger);
@@ -2876,12 +2909,19 @@ button.programaciones-sort:active:not(:disabled) {
   position: absolute;
   right: 8px;
   transform: translateY(-7px);
-  font-size: 0.7rem;
+  font-size: 0.62rem;
   color: var(--text-muted);
   background: var(--surface-card);
   padding: 0 2px;
   z-index: 5;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.agenda-hour-label--hour {
+  font-size: 0.7rem;
+  font-weight: 650;
+  color: var(--text-secondary);
 }
 
 .agenda-hour-label--first {

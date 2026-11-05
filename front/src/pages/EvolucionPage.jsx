@@ -14,6 +14,7 @@ import {
   patchCerrarEvolucion,
   patchEvolucionDiagnosticos,
 } from '../api/client';
+import { useAlerts } from '../alerts/AlertContext';
 import { useAuth } from '../auth/AuthContext';
 import { useCompany } from '../auth/CompanyContext';
 import { HcAccordionSection } from '../components/HcAccordionSection';
@@ -227,6 +228,7 @@ export default function EvolucionPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { notifyOk, notifyError } = useAlerts();
   const { documentoEmpresa, nombreComercialEmpresa } = useCompany();
   const stateDoc = String(location.state?.documentoPaciente ?? '').trim();
   const documentoPaciente = stateDoc || getStoredHcDocumento();
@@ -599,7 +601,9 @@ export default function EvolucionPage() {
   async function guardarNota() {
     const texto = String(notaTexto || '').trim();
     if (!documentoPaciente || !texto) {
-      setError('La nota aclaratoria no puede estar vacía.');
+      const msg = 'La nota aclaratoria no puede estar vacía.';
+      setError(msg);
+      notifyError(msg);
       return;
     }
     setSaving(true);
@@ -614,13 +618,15 @@ export default function EvolucionPage() {
       if (created?.id != null) {
         await openNota(created.id);
       }
+      notifyOk('Nota aclaratoria guardada.');
     } catch (e) {
-      setError(
+      const msg =
         e.response?.data?.message ??
-          e.response?.data?.error ??
-          e.message ??
-          'No se pudo guardar la nota aclaratoria',
-      );
+        e.response?.data?.error ??
+        e.message ??
+        'No se pudo guardar la nota aclaratoria';
+      setError(msg);
+      notifyError(msg);
     } finally {
       setSaving(false);
     }
@@ -672,13 +678,15 @@ export default function EvolucionPage() {
       } else {
         startNueva();
       }
+      notifyOk('Evolución guardada.');
     } catch (e) {
-      setError(
+      const msg =
         e.response?.data?.message ??
-          e.response?.data?.error ??
-          e.message ??
-          'Error al guardar',
-      );
+        e.response?.data?.error ??
+        e.message ??
+        'Error al guardar';
+      setError(msg);
+      notifyError(msg);
     } finally {
       setSaving(false);
     }
@@ -698,13 +706,15 @@ export default function EvolucionPage() {
       setDiagGeneral(diagnosticoGeneral);
       setDiagEspecifico(diagnosticoEspecifico);
       await reloadLista();
+      notifyOk('Cambios de la evolución guardados.');
     } catch (e) {
-      setError(
+      const msg =
         e.response?.data?.message ??
-          e.response?.data?.error ??
-          e.message ??
-          'Error al guardar',
-      );
+        e.response?.data?.error ??
+        e.message ??
+        'Error al guardar';
+      setError(msg);
+      notifyError(msg);
     } finally {
       setSaving(false);
     }
@@ -721,7 +731,9 @@ export default function EvolucionPage() {
     if (formatoFile && formatoHtml) {
       const ok = formatRef.current?.print();
       if (!ok) {
-        setError('No se pudo imprimir el formato');
+        const msg = 'No se pudo imprimir el formato';
+        setError(msg);
+        notifyError(msg);
       }
       return;
     }
@@ -743,7 +755,9 @@ export default function EvolucionPage() {
       especifico: diagEspecifico,
     });
     if (!ok) {
-      setError('No se pudo preparar la impresión de esta historia clínica.');
+      const msg = 'No se pudo preparar la impresión de esta historia clínica.';
+      setError(msg);
+      notifyError(msg);
     }
   }
 
@@ -756,13 +770,15 @@ export default function EvolucionPage() {
     try {
       await patchCerrarEvolucion(selectedId);
       await reloadLista();
+      notifyOk('Historia clínica cerrada.');
     } catch (e) {
-      setError(
+      const msg =
         e.response?.data?.message ??
-          e.response?.data?.error ??
-          e.message ??
-          'No se pudo cerrar la evolución',
-      );
+        e.response?.data?.error ??
+        e.message ??
+        'No se pudo cerrar la evolución';
+      setError(msg);
+      notifyError(msg);
     } finally {
       setSaving(false);
     }

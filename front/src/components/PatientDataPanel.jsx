@@ -4,6 +4,8 @@ import {
   updatePacienteDatos,
   uploadPacienteFoto,
 } from '../api/client';
+import { useAlerts } from '../alerts/AlertContext';
+import { NumericInput } from './NumericInput';
 import { SavingOverlay } from './SavingOverlay';
 
 const CATALOG_KEYS = [
@@ -174,6 +176,7 @@ export function PatientDataPanel({
   onFormChange,
   startEditing = false,
 }) {
+  const { notifyOk, notifyError } = useAlerts();
   const [form, setForm] = useState(EMPTY_FORM);
   const [catalogs, setCatalogs] = useState({});
   const [editing, setEditing] = useState(false);
@@ -309,7 +312,9 @@ export function PatientDataPanel({
     });
     setInvalidIds(bad);
     if (missing.length) {
-      setError(`Complete: ${missing.join(', ')}`);
+      const msg = `Complete: ${missing.join(', ')}`;
+      setError(msg);
+      notifyError(msg);
       return;
     }
 
@@ -348,14 +353,16 @@ export function PatientDataPanel({
       await updatePacienteDatos(documentoPaciente, body);
       setEditing(false);
       setInvalidIds(new Set());
+      notifyOk('Datos del paciente guardados.');
       onSaved?.();
     } catch (e) {
-      setError(
+      const msg =
         e.response?.data?.message ??
-          e.response?.data?.error ??
-          e.message ??
-          'No se pudo guardar',
-      );
+        e.response?.data?.error ??
+        e.message ??
+        'No se pudo guardar';
+      setError(msg);
+      notifyError(msg);
     } finally {
       setSaving(false);
       setSavingLabel('Guardando datos del paciente…');
@@ -368,7 +375,9 @@ export function PatientDataPanel({
     if (!file) return;
     setError('');
     if (!file.type.startsWith('image/')) {
-      setError('Seleccione un archivo de imagen');
+      const msg = 'Seleccione un archivo de imagen';
+      setError(msg);
+      notifyError(msg);
       return;
     }
     const localUrl = URL.createObjectURL(file);
@@ -383,16 +392,18 @@ export function PatientDataPanel({
         fotoUrl: result?.fotoUrl,
         fotoArchivo: result?.fotoArchivo,
       });
+      notifyOk('Foto del paciente guardada.');
     } catch (err) {
       skipFormResetRef.current = false;
       setFotoPreview('');
       URL.revokeObjectURL(localUrl);
-      setError(
+      const msg =
         err.response?.data?.message ??
-          err.response?.data?.error ??
-          err.message ??
-          'No se pudo guardar la foto',
-      );
+        err.response?.data?.error ??
+        err.message ??
+        'No se pudo guardar la foto';
+      setError(msg);
+      notifyError(msg);
     } finally {
       setSaving(false);
       setSavingLabel('Guardando datos del paciente…');
@@ -537,20 +548,28 @@ export function PatientDataPanel({
           invalid={invalidIds.has('idPaisNacionalidad')}
         />
 
-        <TextField
-          label="Talla (cm)"
-          type="number"
-          value={form.talla}
-          onChange={(v) => patch({ talla: v })}
-          disabled={fieldsDisabled}
-        />
-        <TextField
-          label="Peso (kg)"
-          type="number"
-          value={form.peso}
-          onChange={(v) => patch({ peso: v })}
-          disabled={fieldsDisabled}
-        />
+        <label className="hc-field">
+          <span className="hc-field-label">Talla (cm)</span>
+          <NumericInput
+            className="hc-input"
+            value={form.talla}
+            onChange={(v) => patch({ talla: v })}
+            allowDecimal
+            emptyAsZero={false}
+            disabled={fieldsDisabled}
+          />
+        </label>
+        <label className="hc-field">
+          <span className="hc-field-label">Peso (kg)</span>
+          <NumericInput
+            className="hc-input"
+            value={form.peso}
+            onChange={(v) => patch({ peso: v })}
+            allowDecimal
+            emptyAsZero={false}
+            disabled={fieldsDisabled}
+          />
+        </label>
         <TextField
           label="IMC"
           value={form.imc}

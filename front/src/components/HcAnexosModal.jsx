@@ -6,6 +6,7 @@ import {
   messageFromAxiosError,
   uploadPacienteAnexoArchivo,
 } from '../api/client';
+import { useAlerts } from '../alerts/AlertContext';
 
 function formatFechaAnexo(value) {
   if (!value) return '—';
@@ -19,6 +20,7 @@ export function HcAnexosModal({
   nombrePaciente,
   onClose,
 }) {
+  const { notifyOk, notifyError } = useAlerts();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -90,7 +92,12 @@ export function HcAnexosModal({
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (e) {
-      setError(await messageFromAxiosError(e, 'No se pudo abrir el documento'));
+      const msg = await messageFromAxiosError(
+        e,
+        'No se pudo abrir el documento',
+      );
+      setError(msg);
+      notifyError(msg);
     } finally {
       setOpeningId(null);
     }
@@ -104,10 +111,14 @@ export function HcAnexosModal({
     try {
       await uploadPacienteAnexoArchivo(documentoPaciente, id, file);
       setOkMessage('Archivo reemplazado en Documentos.');
+      notifyOk('Archivo reemplazado.');
     } catch (e) {
-      setError(
-        await messageFromAxiosError(e, 'No se pudo reemplazar el archivo'),
+      const msg = await messageFromAxiosError(
+        e,
+        'No se pudo reemplazar el archivo',
       );
+      setError(msg);
+      notifyError(msg);
     } finally {
       setReplacingId(null);
       if (input) input.value = '';
@@ -125,7 +136,9 @@ export function HcAnexosModal({
     if (!file) return;
     const nombre = nuevoNombre.trim();
     if (!nombre) {
-      setError('Escriba el nombre que aparecerá en el listado.');
+      const msg = 'Escriba el nombre que aparecerá en el listado.';
+      setError(msg);
+      notifyError(msg);
       if (input) input.value = '';
       return;
     }
@@ -138,8 +151,11 @@ export function HcAnexosModal({
       setCreating(false);
       setNuevoNombre('');
       setOkMessage('Documento anexo creado.');
+      notifyOk('Documento anexo creado.');
     } catch (e) {
-      setError(await messageFromAxiosError(e, 'No se pudo crear el documento'));
+      const msg = await messageFromAxiosError(e, 'No se pudo crear el documento');
+      setError(msg);
+      notifyError(msg);
     } finally {
       setSavingNew(false);
       if (input) input.value = '';
