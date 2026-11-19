@@ -22,6 +22,7 @@ import { useAlerts } from '../alerts/AlertContext';
 import { useAuth } from '../auth/AuthContext';
 import { useCompany } from '../auth/CompanyContext';
 import { FirmaPacientePad } from '../components/FirmaPacientePad';
+import { FormatoHcSearchSelect } from '../components/FormatoHcSearchSelect';
 import { HcAccordionSection } from '../components/HcAccordionSection';
 import { HcAnexosModal } from '../components/HcAnexosModal';
 import { HcFormatEditor } from '../components/HcFormatEditor';
@@ -1843,32 +1844,16 @@ export default function EvolucionPage() {
                 {showFormatoSelector && (
                   <label className="evolucion-formato-label">
                     Formato de historia clínica
-                    <select
+                    <FormatoHcSearchSelect
+                      formatos={formatos}
                       value={formatoFile}
                       disabled={
                         selectedId != null ||
                         isSelectedClosed ||
                         formatoPrecargaLoading
                       }
-                      onChange={(e) => void onFormatoChange(e.target.value)}
-                    >
-                      {selectedId == null ? (
-                        <>
-                          <option value="">
-                            — Texto libre (sin formato) —
-                          </option>
-                          {formatos.map((f) => (
-                            <option key={f.fileName} value={f.fileName}>
-                              {f.fileName}
-                            </option>
-                          ))}
-                        </>
-                      ) : (
-                        <option value={formatoFile}>
-                          {formatoFile || 'Formato'}
-                        </option>
-                      )}
-                    </select>
+                      onChange={(fileName) => void onFormatoChange(fileName)}
+                    />
                   </label>
                 )}
 
