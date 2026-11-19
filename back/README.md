@@ -13,6 +13,8 @@ Ver [.env.example](.env.example) y el [README del monorepo](../README.md).
 - Health sin prefijo: `/health`, `/health/db`
 - API versionada: `/api/v1/...`
 - Fotos pacientes: `STATIC_IMAGES_PATH` + `GET /static-images/...` (same origin que el API)
+- Firmas profesionales: `FIRMA_ENTIDAD_PATH` + `GET /firma-entidad/...` (nombre real en `Entidad.[Firma Entidad]`)
+- Firma paciente en evolución: `GET/PUT/DELETE /api/v1/evolucion/:id/firma` → `[Firma Evaluación Entidad]` guarda el **nombre de archivo** (`nvarchar(250)`); la imagen va en `FIRMA_ENTIDAD_PATH`. Tras cambiar vistas HC, reejecutar `sql/instalar-actualizar.sql`.
 
 ## Vistas SQL (CeereLITE)
 

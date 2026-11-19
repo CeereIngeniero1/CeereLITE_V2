@@ -130,6 +130,13 @@ export const HcFormatEditor = forwardRef(function HcFormatEditor(
     setHcFormatDisabled(doc, disabled);
   }, [disabled]);
 
+  // Reinyectar firmas/foto cuando llegan URLs (p. ej. tras guardar firma paciente).
+  useEffect(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc?.body || !entidadHttpUrls) return;
+    applyEntidadImages(doc, entidadHttpUrls);
+  }, [entidadHttpUrls]);
+
   return (
     <div className="hc-formato-wrap">
       <iframe

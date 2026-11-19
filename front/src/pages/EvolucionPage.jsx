@@ -3,8 +3,11 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   createEvaluacion,
   createNotaAclaratoria,
+  deleteEvolucionFirmaPaciente,
   fetchEvolucionDetalle,
+  fetchEvolucionFirmaPacienteObjectUrl,
   fetchEvolucionesPaciente,
+  fetchFirmaArchivoProfesional,
   fetchFormatoHcContenido,
   fetchFormatosHc,
   fetchNotaAclaratoria,
@@ -13,10 +16,12 @@ import {
   messageFromAxiosError,
   patchCerrarEvolucion,
   patchEvolucionDiagnosticos,
+  saveEvolucionFirmaPaciente,
 } from '../api/client';
 import { useAlerts } from '../alerts/AlertContext';
 import { useAuth } from '../auth/AuthContext';
 import { useCompany } from '../auth/CompanyContext';
+import { FirmaPacientePad } from '../components/FirmaPacientePad';
 import { HcAccordionSection } from '../components/HcAccordionSection';
 import { HcAnexosModal } from '../components/HcAnexosModal';
 import { HcFormatEditor } from '../components/HcFormatEditor';
@@ -69,9 +74,16 @@ function printHistoriaTexto({
   fecha,
   general,
   especifico,
+  firmaPacienteUrl,
 }) {
   const bodyGeneral = escapeHtml(general).replace(/\n/g, '<br>');
   const bodyEspecifico = escapeHtml(especifico).replace(/\n/g, '<br>');
+  const firmaBlock = firmaPacienteUrl
+    ? `<h2>Firma del paciente</h2>
+  <div class="firma-box">
+    <img src="${escapeHtml(firmaPacienteUrl)}" alt="Firma del paciente" />
+  </div>`
+    : '';
   const html = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -94,6 +106,19 @@ function printHistoriaTexto({
       color: #111;
       background: #fff;
     }
+    .firma-box {
+      border: 1px solid #444;
+      padding: 0.75rem;
+      display: inline-block;
+      background: #fff;
+      page-break-inside: avoid;
+    }
+    .firma-box img {
+      display: block;
+      width: 260px;
+      height: 120px;
+      object-fit: contain;
+    }
     ${printFooterCss()}
     @media print {
       html, body { background: #fff; color: #111; }
@@ -113,6 +138,7 @@ function printHistoriaTexto({
   <div class="block">${bodyGeneral || '—'}</div>
   <h2>Diagnóstico específico / plan</h2>
   <div class="block">${bodyEspecifico || '—'}</div>
+  ${firmaBlock}
   ${printFooterHtml()}
 </body>
 </html>`;
@@ -233,6 +259,7 @@ export default function EvolucionPage() {
   const stateDoc = String(location.state?.documentoPaciente ?? '').trim();
   const documentoPaciente = stateDoc || getStoredHcDocumento();
   const formatRef = useRef(null);
+  const firmaPadRef = useRef(null);
 
   const [pacienteDatos, setPacienteDatos] = useState(null);
   const [patientFormFields, setPatientFormFields] = useState(null);
@@ -262,6 +289,11 @@ export default function EvolucionPage() {
   const [formatoLoading, setFormatoLoading] = useState(false);
   const [formatoUnavailable, setFormatoUnavailable] = useState(false);
   const [formatoPrecargaLoading, setFormatoPrecargaLoading] = useState(false);
+  const [firmaPacienteUrl, setFirmaPacienteUrl] = useState(null);
+  const [firmaPacienteArchivo, setFirmaPacienteArchivo] = useState(null);
+  const [firmaPacienteSaving, setFirmaPacienteSaving] = useState(false);
+  const [firmaProfArchivo, setFirmaProfArchivo] = useState(null);
+  const [firmaProfUrl, setFirmaProfUrl] = useState(null);
 
   const [draftStartedAt, setDraftStartedAt] = useState(null);
 
@@ -494,6 +526,10 @@ export default function EvolucionPage() {
     setDiagEspecifico('');
     setFormatoUnavailable(false);
     clearFormato();
+    revokeFirmaUrl(firmaPacienteUrl);
+    setFirmaPacienteUrl(null);
+    setFirmaPacienteArchivo(null);
+    void loadFirmaProfesional(user?.documentoEntidad);
     setNombreAcompanante('');
     setIdParentescoAcompanante('');
     setTelefonoAcompanante('');
@@ -519,6 +555,77 @@ export default function EvolucionPage() {
     setError('');
   }
 
+  function revokeFirmaUrl(url) {
+    if (url && String(url).startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function setFirmaPacienteFromArchivo(archivoRaw) {
+    const base = String(archivoRaw ?? '')
+      .trim()
+      .replace(/^.*[\\/]/, '');
+    revokeFirmaUrl(firmaPacienteUrl);
+    if (!base) {
+      setFirmaPacienteArchivo(null);
+      setFirmaPacienteUrl(null);
+      return;
+    }
+    setFirmaPacienteArchivo(base);
+    setFirmaPacienteUrl(
+      `${API_ORIGIN.replace(/\/$/, '')}/firma-entidad/${encodeURIComponent(base)}`,
+    );
+  }
+
+  async function loadFirmaPaciente(id, archivoHint) {
+    revokeFirmaUrl(firmaPacienteUrl);
+    setFirmaPacienteUrl(null);
+    setFirmaPacienteArchivo(null);
+    if (id == null) return;
+    const hint = String(archivoHint ?? '')
+      .trim()
+      .replace(/^.*[\\/]/, '');
+    if (hint) {
+      setFirmaPacienteFromArchivo(hint);
+      return;
+    }
+    try {
+      const data = await fetchEvolucionFirmaPacienteObjectUrl(id);
+      if (!data?.url) {
+        setFirmaPacienteUrl(null);
+        return;
+      }
+      if (data.archivo) {
+        // Preferir URL estática (iframe/impresión del formato Entidad2).
+        revokeFirmaUrl(data.url);
+        setFirmaPacienteFromArchivo(data.archivo);
+      } else {
+        setFirmaPacienteUrl(data.url);
+      }
+    } catch {
+      setFirmaPacienteUrl(null);
+    }
+  }
+
+  async function loadFirmaProfesional(documento) {
+    const doc = String(documento ?? '').trim();
+    setFirmaProfArchivo(null);
+    setFirmaProfUrl(null);
+    if (!doc) return;
+    try {
+      const data = await fetchFirmaArchivoProfesional(doc);
+      setFirmaProfArchivo(data?.archivo || null);
+      setFirmaProfUrl(data?.url || null);
+    } catch {
+      setFirmaProfArchivo(null);
+      setFirmaProfUrl(null);
+    }
+  }
+
   async function openDetalle(id) {
     setHcView('evolucion');
     setDraftStartedAt(null);
@@ -534,7 +641,33 @@ export default function EvolucionPage() {
     try {
       const rows = await fetchEvolucionDetalle(id);
       const arr = Array.isArray(rows) ? rows : [];
-      const { general, especifico } = pickDiagFromRow(arr[0]);
+      const row0 = arr[0];
+      const { general, especifico } = pickDiagFromRow(row0);
+      const profDoc =
+        String(
+          row0?.['Documento Profesional'] ??
+            row0?.DocumentoProfesional ??
+            user?.documentoEntidad ??
+            '',
+        ).trim() || String(user?.documentoEntidad ?? '').trim();
+      const firmaArchivoRow = String(
+        row0?.['Firma Archivo Profesional'] ?? '',
+      ).trim();
+      if (firmaArchivoRow) {
+        const base = String(firmaArchivoRow).replace(/^.*[\\/]/, '');
+        setFirmaProfArchivo(base);
+        setFirmaProfUrl(
+          `${API_ORIGIN.replace(/\/$/, '')}/firma-entidad/${encodeURIComponent(base)}`,
+        );
+      } else {
+        void loadFirmaProfesional(profDoc);
+      }
+      const firmaPacienteRow = String(
+        row0?.['Firma Archivo Paciente'] ??
+          row0?.['Firma Evaluación Entidad'] ??
+          '',
+      ).trim();
+      void loadFirmaPaciente(id, firmaPacienteRow);
       const fileName = parseFormatoFileName(general);
       const listItem = lista.find(
         (x) => x.origen === 'evolucion' && Number(x.id) === Number(id),
@@ -649,35 +782,73 @@ export default function EvolucionPage() {
     };
   }
 
+  /**
+   * Persiste la evolución actual (alta o actualización) y devuelve su id.
+   * Usado por Guardar / Actualizar y por el flujo de firma del paciente.
+   */
+  async function persistEvolucionActual() {
+    if (!documentoPaciente || !hasPaciente) {
+      throw new Error('Seleccione un paciente antes de guardar.');
+    }
+    if (selectedOrigen !== 'evolucion') {
+      throw new Error('Solo se puede firmar una evolución clínica.');
+    }
+    if (
+      selectedId != null &&
+      lista.some(
+        (x) =>
+          x.origen === 'evolucion' &&
+          Number(x.id) === Number(selectedId) &&
+          x.estado === 'Cerrado',
+      )
+    ) {
+      throw new Error('Esta HC está cerrada; no se puede modificar ni firmar.');
+    }
+
+    const { diagnosticoGeneral, diagnosticoEspecifico } = collectDiagnosticos();
+
+    if (selectedId != null) {
+      await patchEvolucionDiagnosticos(selectedId, {
+        diagnosticoGeneral,
+        diagnosticoEspecifico,
+      });
+      setDiagGeneral(diagnosticoGeneral);
+      setDiagEspecifico(diagnosticoEspecifico);
+      await reloadLista();
+      return Number(selectedId);
+    }
+
+    const body = buildCreatePayload({
+      formFields: patientFormFields,
+      evolucionSnapshot,
+      documentoPaciente,
+      documentoEmpresa,
+      diagnosticoGeneral,
+      diagnosticoEspecifico,
+      idTipoEvaluacion: formatoFile ? 4 : 1,
+      nombreAcompanante,
+      idParentescoAcompanante,
+      telefonoAcompanante,
+      responsableNombre,
+      idParentescoResponsable,
+      telefonoResponsable,
+    });
+    const { idEvaluacion } = await createEvaluacion(body);
+    if (idEvaluacion == null) {
+      throw new Error('No se obtuvo el id de la evolución al guardar.');
+    }
+    await reloadLista();
+    await openDetalle(idEvaluacion);
+    return Number(idEvaluacion);
+  }
+
   async function guardarNueva() {
     if (!documentoPaciente || !hasPaciente) return;
     setSaving(true);
     setSavingLabel('Guardando evolución…');
     setError('');
     try {
-      const { diagnosticoGeneral, diagnosticoEspecifico } = collectDiagnosticos();
-      const body = buildCreatePayload({
-        formFields: patientFormFields,
-        evolucionSnapshot,
-        documentoPaciente,
-        documentoEmpresa,
-        diagnosticoGeneral,
-        diagnosticoEspecifico,
-        idTipoEvaluacion: formatoFile ? 4 : 1,
-        nombreAcompanante,
-        idParentescoAcompanante,
-        telefonoAcompanante,
-        responsableNombre,
-        idParentescoResponsable,
-        telefonoResponsable,
-      });
-      const { idEvaluacion } = await createEvaluacion(body);
-      await reloadLista();
-      if (idEvaluacion != null) {
-        await openDetalle(idEvaluacion);
-      } else {
-        startNueva();
-      }
+      await persistEvolucionActual();
       notifyOk('Evolución guardada.');
     } catch (e) {
       const msg =
@@ -698,14 +869,7 @@ export default function EvolucionPage() {
     setSavingLabel('Guardando cambios…');
     setError('');
     try {
-      const { diagnosticoGeneral, diagnosticoEspecifico } = collectDiagnosticos();
-      await patchEvolucionDiagnosticos(selectedId, {
-        diagnosticoGeneral,
-        diagnosticoEspecifico,
-      });
-      setDiagGeneral(diagnosticoGeneral);
-      setDiagEspecifico(diagnosticoEspecifico);
-      await reloadLista();
+      await persistEvolucionActual();
       notifyOk('Cambios de la evolución guardados.');
     } catch (e) {
       const msg =
@@ -729,6 +893,7 @@ export default function EvolucionPage() {
     if (formatoUnavailable || formatoLoading) return;
     setError('');
     if (formatoFile && formatoHtml) {
+      // Formatos: solo Entidad3 (firma profesional) si el HTML la trae.
       const ok = formatRef.current?.print();
       if (!ok) {
         const msg = 'No se pudo imprimir el formato';
@@ -753,11 +918,110 @@ export default function EvolucionPage() {
       fecha,
       general: diagGeneral,
       especifico: diagEspecifico,
+      firmaPacienteUrl,
     });
     if (!ok) {
       const msg = 'No se pudo preparar la impresión de esta historia clínica.';
       setError(msg);
       notifyError(msg);
+    }
+  }
+
+  async function guardarFirmaPaciente(dataUrl) {
+    if (selectedOrigen !== 'evolucion') {
+      throw new Error('Solo se puede firmar una evolución clínica.');
+    }
+    if (isSelectedClosed) {
+      throw new Error('Esta HC está cerrada; no se puede firmar.');
+    }
+    const eraBorrador = selectedId == null;
+    setFirmaPacienteSaving(true);
+    setSaving(true);
+    setSavingLabel(
+      eraBorrador
+        ? 'Guardando evolución y firma…'
+        : 'Guardando firma del paciente…',
+    );
+    setError('');
+    try {
+      // Si aún no hay id (borrador), guarda la HC hasta donde está y luego la firma.
+      const id = await persistEvolucionActual();
+      const saved = await saveEvolucionFirmaPaciente(id, dataUrl);
+      setFirmaPacienteFromArchivo(saved?.archivo);
+      if (!saved?.archivo) {
+        await loadFirmaPaciente(id);
+      }
+      notifyOk(
+        eraBorrador
+          ? 'Evolución y firma del paciente guardadas.'
+          : 'Firma del paciente guardada.',
+      );
+    } catch (e) {
+      const msg = await messageFromAxiosError(
+        e,
+        'No se pudo guardar la firma del paciente',
+      );
+      setError(msg);
+      notifyError(msg);
+      throw new Error(msg);
+    } finally {
+      setFirmaPacienteSaving(false);
+      setSaving(false);
+    }
+  }
+
+  async function irAFirmarPaciente() {
+    if (!canFirmarPaciente) return;
+    setError('');
+    try {
+      // Al ir a firmar, persistir lo escrito hasta ahora (alta o update).
+      setSaving(true);
+      setSavingLabel(
+        selectedId == null
+          ? 'Guardando evolución para firmar…'
+          : 'Actualizando evolución…',
+      );
+      const wasDraft = selectedId == null;
+      await persistEvolucionActual();
+      if (wasDraft) {
+        notifyOk('Evolución guardada. Puede firmar el paciente.');
+      }
+    } catch (e) {
+      const msg = await messageFromAxiosError(
+        e,
+        'No se pudo guardar la evolución para firmar',
+      );
+      setError(msg);
+      notifyError(msg);
+      return;
+    } finally {
+      setSaving(false);
+    }
+    requestAnimationFrame(() => {
+      firmaPadRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+  }
+
+  async function quitarFirmaPaciente() {
+    if (selectedId == null) return;
+    setFirmaPacienteSaving(true);
+    try {
+      await deleteEvolucionFirmaPaciente(selectedId);
+      revokeFirmaUrl(firmaPacienteUrl);
+      setFirmaPacienteUrl(null);
+      setFirmaPacienteArchivo(null);
+      notifyOk('Firma del paciente eliminada.');
+    } catch (e) {
+      const msg = await messageFromAxiosError(
+        e,
+        'No se pudo eliminar la firma',
+      );
+      notifyError(msg);
+    } finally {
+      setFirmaPacienteSaving(false);
     }
   }
 
@@ -803,6 +1067,13 @@ export default function EvolucionPage() {
     selectedOrigen === 'evolucion' && selectedItem?.estado === 'Cerrado';
   const isSelectedOpen =
     selectedOrigen === 'evolucion' && selectedId != null && !isSelectedClosed;
+  /** Borrador nuevo o HC abierta: puede firmar. Cerrada: no. */
+  const canFirmarPaciente =
+    hcView === 'evolucion' &&
+    selectedOrigen === 'evolucion' &&
+    hasPaciente &&
+    !isSelectedClosed &&
+    (selectedId == null || isSelectedOpen);
   const isSavedFormato =
     selectedOrigen === 'evolucion' &&
     selectedId != null &&
@@ -855,35 +1126,56 @@ export default function EvolucionPage() {
   const entidadFileUrls = useMemo(() => {
     const dirs = formatoFileDirs ?? {};
     const pacienteDoc = String(documentoPaciente ?? '').trim();
-    const profesionalDoc = String(user?.documentoEntidad ?? '').trim();
     const fotoArchivo =
       demografia?.fotoArchivo || (pacienteDoc ? `${pacienteDoc}.jpg` : '');
+    const firmaProf = String(firmaProfArchivo ?? '').trim();
+    const firmaPac = String(firmaPacienteArchivo ?? '').trim();
     return {
       Entidad1: fotoArchivo
         ? joinFileDir(dirs.fotoEntidad, fotoArchivo)
         : '',
-      Entidad3: profesionalDoc
-        ? joinFileDir(dirs.firmaEntidad, `${profesionalDoc}.jpg`)
-        : '',
+      // Formatos Ceere: Entidad2 = paciente / representante
+      Entidad2:
+        firmaPac && dirs.firmaEntidad
+          ? joinFileDir(dirs.firmaEntidad, firmaPac)
+          : '',
+      // Entidad3 = profesional (Entidad.[Firma Entidad])
+      Entidad3:
+        firmaProf && dirs.firmaEntidad
+          ? joinFileDir(dirs.firmaEntidad, firmaProf)
+          : '',
     };
-  }, [formatoFileDirs, documentoPaciente, user, demografia?.fotoArchivo]);
+  }, [
+    formatoFileDirs,
+    documentoPaciente,
+    demografia?.fotoArchivo,
+    firmaProfArchivo,
+    firmaPacienteArchivo,
+  ]);
 
   const entidadHttpUrls = useMemo(() => {
     const origin = API_ORIGIN.replace(/\/$/, '');
     const pacienteDoc = String(documentoPaciente ?? '').trim();
-    const profesionalDoc = String(user?.documentoEntidad ?? '').trim();
     const fotoHttp =
       demografia?.fotoUrl ||
       (pacienteDoc
         ? `${origin}/static-images/${encodeURIComponent(`${pacienteDoc}.jpg`)}`
         : '');
+    const firmaPacHttp = firmaPacienteArchivo
+      ? `${origin}/firma-entidad/${encodeURIComponent(firmaPacienteArchivo)}`
+      : firmaPacienteUrl || '';
     return {
       Entidad1: fotoHttp,
-      Entidad3: profesionalDoc
-        ? `${origin}/firma-entidad/${encodeURIComponent(`${profesionalDoc}.jpg`)}`
-        : '',
+      Entidad2: firmaPacHttp,
+      Entidad3: firmaProfUrl || '',
     };
-  }, [documentoPaciente, user, demografia?.fotoUrl]);
+  }, [
+    documentoPaciente,
+    demografia?.fotoUrl,
+    firmaProfUrl,
+    firmaPacienteArchivo,
+    firmaPacienteUrl,
+  ]);
 
   const formatoAutofill = useMemo(() => {
     const row = detailRows?.[0];
@@ -1438,6 +1730,23 @@ export default function EvolucionPage() {
                 icon="✎"
                 defaultOpen
               >
+                {canFirmarPaciente ? (
+                  <div className="evolucion-firma-bar">
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={saving || firmaPacienteSaving || formatoLoading}
+                      onClick={() => void irAFirmarPaciente()}
+                    >
+                      Firmar paciente
+                    </button>
+                    <p className="muted evolucion-firma-bar-hint">
+                      {selectedId == null
+                        ? 'Al firmar se guarda la evolución con lo escrito hasta ahora. Después de cerrar la HC ya no se podrá firmar.'
+                        : 'HC abierta: puede firmar o actualizar la firma. Al cerrar la HC la firma queda bloqueada.'}
+                    </p>
+                  </div>
+                ) : null}
                 {selectedId != null && detailRows?.[0] && (
                   <p className="muted evolucion-meta">
                     Profesional:{' '}
@@ -1457,7 +1766,8 @@ export default function EvolucionPage() {
                 )}
                 {isSelectedClosed && !formatoUnavailable && (
                   <div className="alert alert-warn">
-                    Esta HC está cerrada. Puedes consultarla, pero no editarla.
+                    Esta HC está cerrada. Puedes consultarla, pero no editarla ni
+                    firmarla.
                   </div>
                 )}
 
@@ -1611,6 +1921,21 @@ export default function EvolucionPage() {
                         </label>
                       </>
                     )}
+
+                    {selectedOrigen === 'evolucion' ? (
+                      <div ref={firmaPadRef}>
+                        <FirmaPacientePad
+                          existingUrl={firmaPacienteUrl}
+                          disabled={!canFirmarPaciente}
+                          saving={firmaPacienteSaving || saving}
+                          draftHint={selectedId == null}
+                          onSave={guardarFirmaPaciente}
+                          onClear={
+                            selectedId != null ? quitarFirmaPaciente : undefined
+                          }
+                        />
+                      </div>
+                    ) : null}
 
                     <div className="evolucion-actions">
                       {(formatoHtml ||

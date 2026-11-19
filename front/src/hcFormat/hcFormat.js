@@ -190,7 +190,13 @@ export function applyEntidadImages(doc, httpUrls) {
   if (!httpUrls) return;
   for (const [name, url] of Object.entries(httpUrls)) {
     if (!url) continue;
-    for (const el of elementsByName(doc, name)) {
+    const byName = elementsByName(doc, name);
+    const byId = doc.getElementById?.(name);
+    const nodes = byName.slice();
+    if (byId && byId.tagName === 'IMG' && !nodes.includes(byId)) {
+      nodes.push(byId);
+    }
+    for (const el of nodes) {
       if (el.tagName === 'IMG') el.setAttribute('src', url);
     }
   }

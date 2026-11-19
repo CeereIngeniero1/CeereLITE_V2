@@ -1,11 +1,13 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   Request,
   StreamableFile,
@@ -20,6 +22,7 @@ import type { UploadedFotoFile } from '../entidad-foto';
 import { CreateEvaluacionDto } from './dto/create-evaluacion.dto';
 import { CreateNotaAclaratoriaDto } from './dto/create-nota-aclaratoria.dto';
 import { CreateObservacionDto } from './dto/create-observacion.dto';
+import { GuardarFirmaEvaluacionDto } from './dto/guardar-firma-evaluacion.dto';
 import { UpdateEvaluacionDiagDto } from './dto/update-evaluacion-diag.dto';
 import { UpdateObservacionDto } from './dto/update-observacion.dto';
 import { UpdatePacienteDemografiaDto } from './dto/update-paciente-demografia.dto';
@@ -187,6 +190,12 @@ export class EvolucionController {
     return this.formatosHcService.getContenido(file);
   }
 
+  /** Firma profesional en disco (Entidad.[Firma Entidad] → /firma-entidad/...). */
+  @Get('profesional/:documento/firma-archivo')
+  firmaArchivoProfesional(@Param('documento') documento: string) {
+    return this.evolucionService.resolveFirmaEntidadProfesional(documento);
+  }
+
   @Post()
   crear(
     @Request() req: ExpressRequest & { user: JwtPayload },
@@ -209,6 +218,36 @@ export class EvolucionController {
     @Body() dto: CreateNotaAclaratoriaDto,
   ) {
     return this.evolucionService.createNotaAclaratoria(req.user, dto);
+  }
+
+  @Get(':id/firma')
+  async firmaPaciente(@Param('id', ParseIntPipe) id: number) {
+    const { buffer, contentType, archivo } =
+      await this.evolucionService.getFirmaEvaluacionPaciente(id);
+    const safeName = String(archivo || `firma-evaluacion-${id}.jpg`).replace(
+      /["\r\n]/g,
+      '',
+    );
+    return new StreamableFile(buffer, {
+      type: contentType,
+      disposition: `inline; filename="${safeName}"`,
+    });
+  }
+
+  @Put(':id/firma')
+  guardarFirmaPaciente(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: GuardarFirmaEvaluacionDto,
+  ) {
+    return this.evolucionService.saveFirmaEvaluacionPaciente(
+      id,
+      dto.imagenBase64,
+    );
+  }
+
+  @Delete(':id/firma')
+  borrarFirmaPaciente(@Param('id', ParseIntPipe) id: number) {
+    return this.evolucionService.clearFirmaEvaluacionPaciente(id);
   }
 
   @Get(':id')

@@ -407,6 +407,57 @@ export async function patchCerrarEvolucion(id) {
   return data;
 }
 
+/**
+ * Descarga la firma del paciente (archivo en FIRMA_ENTIDAD_PATH).
+ * @param {number} id
+ * @returns {Promise<{ url: string, archivo: string|null }|null>}
+ */
+export async function fetchEvolucionFirmaPacienteObjectUrl(id) {
+  try {
+    const res = await api.get(`/evolucion/${encodeURIComponent(id)}/firma`, {
+      responseType: 'blob',
+    });
+    if (!res.data || res.data.size === 0) return null;
+    const cd = String(res.headers?.['content-disposition'] ?? '');
+    const m = /filename\*?=(?:UTF-8''|")?([^\";]+)"?/i.exec(cd);
+    const archivo = m?.[1] ? decodeURIComponent(m[1].trim()) : null;
+    return {
+      url: URL.createObjectURL(res.data),
+      archivo: archivo ? archivo.replace(/^.*[\\/]/, '') : null,
+    };
+  } catch (e) {
+    if (e?.response?.status === 404) return null;
+    throw e;
+  }
+}
+
+/** @param {number} id @param {string} imagenBase64 dataURL PNG/JPEG */
+export async function saveEvolucionFirmaPaciente(id, imagenBase64) {
+  const { data } = await api.put(`/evolucion/${encodeURIComponent(id)}/firma`, {
+    imagenBase64,
+  });
+  return data;
+}
+
+/** @param {number} id */
+export async function deleteEvolucionFirmaPaciente(id) {
+  const { data } = await api.delete(
+    `/evolucion/${encodeURIComponent(id)}/firma`,
+  );
+  return data;
+}
+
+/**
+ * Resuelve archivo real de firma profesional (Entidad.[Firma Entidad]).
+ * @param {string} documento
+ */
+export async function fetchFirmaArchivoProfesional(documento) {
+  const { data } = await api.get(
+    `/evolucion/profesional/${encodeURIComponent(documento)}/firma-archivo`,
+  );
+  return data;
+}
+
 /** @param {string} clave @param {string} [q] */
 export async function fetchRdaCatalog1888(clave, q) {
   const { data } = await api.get(

@@ -252,7 +252,9 @@ AS
 SELECT eve.[Id Evaluación Entidad],
        tpe.[Tipo de Evaluación],
        eve.[Id Tipo de Evaluación],
+       LTRIM(RTRIM(eve.[Documento Profesional])) AS [Documento Profesional],
        enpro.[Nombre Completo Entidad] AS [Nombre Profesional],
+       LTRIM(RTRIM(enpro.[Firma Entidad])) AS [Firma Archivo Profesional],
        eve.[Fecha Evaluación Entidad],
        en.[Nombre Completo Entidad] AS [Nombre Paciente],
        eve.[Documento Entidad] AS [Documento Paciente],
@@ -284,7 +286,11 @@ SELECT eve.[Id Evaluación Entidad],
        eve.[Teléfono Responsable],
        eve.[Diagnóstico General Evaluación Entidad] AS [Diagnostico General],
        eve.[Diagnóstico Específico Evaluación Entidad] AS [Diagnostico especifico],
-       eve.[Firma Evaluación Entidad]
+       LTRIM(RTRIM(eve.[Firma Evaluación Entidad])) AS [Firma Archivo Paciente],
+       CASE
+         WHEN NULLIF(LTRIM(RTRIM(eve.[Firma Evaluación Entidad])), '') IS NULL THEN 0
+         ELSE 1
+       END AS [Tiene Firma Paciente]
 FROM [Evaluación Entidad] AS eve
 LEFT JOIN [Tipo de Evaluación] AS tpe
   ON eve.[Id Tipo de Evaluación] = tpe.[Id Tipo de Evaluación]

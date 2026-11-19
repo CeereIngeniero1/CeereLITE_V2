@@ -275,6 +275,48 @@ function isEmptyRequired(v: unknown): boolean {
   return s === '' || s === 'null' || s === 'undefined';
 }
 
+function detectImageContentType(buf: Buffer): string {
+  if (
+    buf.length >= 8 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47
+  ) {
+    return 'image/png';
+  }
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (
+    buf.length >= 6 &&
+    buf[0] === 0x47 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46
+  ) {
+    return 'image/gif';
+  }
+  return 'application/octet-stream';
+}
+
+function parseDataUrlImage(dataUrl: string): Buffer {
+  const raw = String(dataUrl ?? '').trim();
+  const m = raw.match(/^data:image\/(png|jpeg|jpg);base64,(.+)$/i);
+  if (!m) {
+    throw new BadRequestException(
+      'Formato inválido: se espera data:image/png;base64,...',
+    );
+  }
+  const buffer = Buffer.from(m[2], 'base64');
+  if (!buffer.length) {
+    throw new BadRequestException('La imagen de la firma está vacía');
+  }
+  if (buffer.length > 1_500_000) {
+    throw new BadRequestException('La firma supera el tamaño máximo permitido');
+  }
+  return buffer;
+}
+
 const PACIENTE_CATALOG_SEGMENTS = [
   'paises',
   'municipios',
@@ -946,33 +988,286 @@ export class EvolucionService {
   }
 
   async getEvolucionMedicaById(idEvaluacion: number): Promise<unknown[]> {
-    const rows = await this.dataSource.query(
-      `
-      SELECT [Id Evaluación Entidad], [Tipo de Evaluación], [Id Tipo de Evaluación], [Nombre Profesional],
-             [Fecha Evaluación Entidad], [Nombre Paciente],
-             [Documento Paciente], [Dirección Domicilio], [Id Ciudad], Ciudad,
-             [Teléfono Domicilio], [Fecha Nacimiento], [Edad Paciente],
-             [Id Unidad de Medida Edad], [Unidad Medida], [Id Sexo], [Descripción Sexo],
-             [Id Estado Civil], [Estado Civil], [Id Ocupación], Ocupación, [Documento Aseguradora],
-             [Nombre Aseguradora], [Id Tipo de Afiliado], [Tipo de Afiliado],
-             [Acompanante],
-             [Id Parentesco],
-             [Parentesco Acompanante],
-             [Teléfono Acompañante],
-             [Responsable], [Id Parentesco Responsable], [Parentesco Responsable],
-             [Teléfono Responsable], [Diagnostico General],
-             [Diagnostico especifico], [Firma Evaluación Entidad]
-      FROM dbo.[Lite Cnsta HcEvaluacionDetalle]
-      WHERE [Id Evaluación Entidad] = @0
-    `,
-      [idEvaluacion],
-    );
+    let rows: Record<string, unknown>[];
+    try {
+      rows = await this.dataSource.query(
+        `
+        SELECT [Id Evaluación Entidad], [Tipo de Evaluación], [Id Tipo de Evaluación],
+               [Documento Profesional], [Nombre Profesional], [Firma Archivo Profesional],
+               [Fecha Evaluación Entidad], [Nombre Paciente],
+               [Documento Paciente], [Dirección Domicilio], [Id Ciudad], Ciudad,
+               [Teléfono Domicilio], [Fecha Nacimiento], [Edad Paciente],
+               [Id Unidad de Medida Edad], [Unidad Medida], [Id Sexo], [Descripción Sexo],
+               [Id Estado Civil], [Estado Civil], [Id Ocupación], Ocupación, [Documento Aseguradora],
+               [Nombre Aseguradora], [Id Tipo de Afiliado], [Tipo de Afiliado],
+               [Acompanante],
+               [Id Parentesco],
+               [Parentesco Acompanante],
+               [Teléfono Acompañante],
+               [Responsable], [Id Parentesco Responsable], [Parentesco Responsable],
+               [Teléfono Responsable], [Diagnostico General],
+               [Diagnostico especifico],
+               [Firma Archivo Paciente],
+               [Tiene Firma Paciente]
+        FROM dbo.[Lite Cnsta HcEvaluacionDetalle]
+        WHERE [Id Evaluación Entidad] = @0
+      `,
+        [idEvaluacion],
+      );
+    } catch (err) {
+      this.logger.warn(
+        `HcEvaluacionDetalle columnas nuevas: ${err instanceof Error ? err.message : String(err)}. Reejecutar instalar-actualizar.sql`,
+      );
+      rows = await this.dataSource.query(
+        `
+        SELECT [Id Evaluación Entidad], [Tipo de Evaluación], [Id Tipo de Evaluación], [Nombre Profesional],
+               [Fecha Evaluación Entidad], [Nombre Paciente],
+               [Documento Paciente], [Dirección Domicilio], [Id Ciudad], Ciudad,
+               [Teléfono Domicilio], [Fecha Nacimiento], [Edad Paciente],
+               [Id Unidad de Medida Edad], [Unidad Medida], [Id Sexo], [Descripción Sexo],
+               [Id Estado Civil], [Estado Civil], [Id Ocupación], Ocupación, [Documento Aseguradora],
+               [Nombre Aseguradora], [Id Tipo de Afiliado], [Tipo de Afiliado],
+               [Acompanante],
+               [Id Parentesco],
+               [Parentesco Acompanante],
+               [Teléfono Acompañante],
+               [Responsable], [Id Parentesco Responsable], [Parentesco Responsable],
+               [Teléfono Responsable], [Diagnostico General],
+               [Diagnostico especifico]
+        FROM dbo.[Lite Cnsta HcEvaluacionDetalle]
+        WHERE [Id Evaluación Entidad] = @0
+      `,
+        [idEvaluacion],
+      );
+    }
 
     if (!rows.length) {
       throw new NotFoundException('Evolución no encontrada');
     }
 
+    const row = rows[0] as Record<string, unknown>;
+    if (row['Tiene Firma Paciente'] == null) {
+      try {
+        const flag = await this.dataSource.query<{ n: number }[]>(
+          `
+          SELECT CASE
+                   WHEN NULLIF(LTRIM(RTRIM([Firma Evaluación Entidad])), '') IS NULL THEN 0
+                   ELSE 1
+                 END AS n
+          FROM [Evaluación Entidad]
+          WHERE [Id Evaluación Entidad] = @0
+          `,
+          [idEvaluacion],
+        );
+        row['Tiene Firma Paciente'] = Number(flag[0]?.n ?? 0);
+      } catch {
+        row['Tiene Firma Paciente'] = 0;
+      }
+    }
+
     return rows;
+  }
+
+  /**
+   * Firma del profesional en disco (Ceere: carpeta Firma Entidad).
+   * El nombre real viene de Entidad.[Firma Entidad] (puede ser aleatorio).
+   */
+  async resolveFirmaEntidadProfesional(documentoRaw: string): Promise<{
+    documento: string;
+    archivo: string | null;
+    url: string | null;
+    existeArchivo: boolean;
+  }> {
+    const documento = String(documentoRaw ?? '').trim();
+    if (!documento) {
+      throw new BadRequestException('documento de profesional obligatorio');
+    }
+    const rows = await this.dataSource.query<{ firma: string | null }[]>(
+      `
+      SELECT TOP 1 LTRIM(RTRIM([Firma Entidad])) AS firma
+      FROM Entidad
+      WHERE LTRIM(RTRIM([Documento Entidad])) = LTRIM(RTRIM(@0))
+      `,
+      [documento],
+    );
+    const raw = String(rows[0]?.firma ?? '').trim();
+    const archivo = raw ? path.basename(raw.replace(/\\/g, '/')) : null;
+    if (!archivo) {
+      return { documento, archivo: null, url: null, existeArchivo: false };
+    }
+    const root = path.resolve(
+      this.config.getOrThrow<string>('FIRMA_ENTIDAD_PATH'),
+    );
+    const full = path.join(root, archivo);
+    const existeArchivo = fs.existsSync(full) && fs.statSync(full).isFile();
+    const base = this.config
+      .getOrThrow<string>('API_PUBLIC_BASE_URL')
+      .replace(/\/$/, '');
+    return {
+      documento,
+      archivo,
+      url: existeArchivo
+        ? `${base}/firma-entidad/${encodeURIComponent(archivo)}`
+        : null,
+      existeArchivo,
+    };
+  }
+
+  /** Carpeta Ceere de firmas en disco (misma que Firma Entidad). */
+  private firmaEntidadRoot(): string {
+    return path.resolve(this.config.getOrThrow<string>('FIRMA_ENTIDAD_PATH'));
+  }
+
+  private resolveFirmaArchivoPath(archivoRaw: string): string {
+    const archivo = path.basename(String(archivoRaw ?? '').replace(/\\/g, '/'));
+    if (!archivo || archivo === '.' || archivo === '..') {
+      throw new BadRequestException('Nombre de archivo de firma inválido');
+    }
+    const root = this.firmaEntidadRoot();
+    const full = path.resolve(root, archivo);
+    const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
+    if (!full.toLowerCase().startsWith(rootWithSep.toLowerCase())) {
+      throw new BadRequestException('Ruta de firma no permitida');
+    }
+    return full;
+  }
+
+  private tryUnlinkFirmaArchivo(archivoRaw: string | null | undefined) {
+    const name = String(archivoRaw ?? '').trim();
+    if (!name) return;
+    try {
+      const full = this.resolveFirmaArchivoPath(name);
+      if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+        fs.unlinkSync(full);
+      }
+    } catch {
+      /* archivo huérfano: no bloquear */
+    }
+  }
+
+  /**
+   * Firma del paciente: Ceere guarda SOLO el nombre de archivo en
+   * [Firma Evaluación Entidad] (nvarchar(250)); la imagen vive en FIRMA_ENTIDAD_PATH.
+   */
+  async getFirmaEvaluacionPaciente(idEvaluacion: number): Promise<{
+    contentType: string;
+    buffer: Buffer;
+    archivo: string;
+  }> {
+    const rows = await this.dataSource.query<{ firma: string | null }[]>(
+      `
+      SELECT TOP 1 LTRIM(RTRIM([Firma Evaluación Entidad])) AS firma
+      FROM [Evaluación Entidad]
+      WHERE [Id Evaluación Entidad] = @0
+        AND [Id Tipo de Evaluación] IN (${TIPOS_NOTA_CLINICA})
+      `,
+      [idEvaluacion],
+    );
+    if (!rows.length) {
+      throw new NotFoundException('Evolución no encontrada');
+    }
+    const archivo = path.basename(
+      String(rows[0]?.firma ?? '')
+        .trim()
+        .replace(/\\/g, '/'),
+    );
+    if (!archivo) {
+      throw new NotFoundException('Esta evolución no tiene firma del paciente');
+    }
+    const full = this.resolveFirmaArchivoPath(archivo);
+    if (!fs.existsSync(full) || !fs.statSync(full).isFile()) {
+      throw new NotFoundException(
+        `No se encontró el archivo de firma del paciente (${archivo})`,
+      );
+    }
+    const buffer = fs.readFileSync(full);
+    return {
+      contentType: detectImageContentType(buffer),
+      buffer,
+      archivo,
+    };
+  }
+
+  async saveFirmaEvaluacionPaciente(
+    idEvaluacion: number,
+    imagenBase64: string,
+  ): Promise<{ ok: true; archivo: string; bytes: number }> {
+    await this.assertEvolucionMedicaEditable(idEvaluacion);
+    const buffer = parseDataUrlImage(imagenBase64);
+    const contentType = detectImageContentType(buffer);
+    const ext = contentType === 'image/png' ? 'png' : 'jpg';
+    // Columna nvarchar(250): solo nombre de archivo; bytes en FIRMA_ENTIDAD_PATH.
+    const archivo = `ev${idEvaluacion}_${Date.now().toString(36)}.${ext}`;
+    if (archivo.length > 250) {
+      throw new BadRequestException('Nombre de firma supera nvarchar(250)');
+    }
+
+    const prev = await this.dataSource.query<{ firma: string | null }[]>(
+      `
+      SELECT TOP 1 LTRIM(RTRIM([Firma Evaluación Entidad])) AS firma
+      FROM [Evaluación Entidad]
+      WHERE [Id Evaluación Entidad] = @0
+        AND [Id Tipo de Evaluación] IN (${TIPOS_NOTA_CLINICA})
+      `,
+      [idEvaluacion],
+    );
+    const prevArchivo = String(prev[0]?.firma ?? '').trim();
+
+    const root = this.firmaEntidadRoot();
+    if (!fs.existsSync(root)) {
+      fs.mkdirSync(root, { recursive: true });
+    }
+    const full = this.resolveFirmaArchivoPath(archivo);
+    fs.writeFileSync(full, buffer);
+
+    try {
+      await this.dataSource.query(
+        `
+        UPDATE [Evaluación Entidad]
+        SET [Firma Evaluación Entidad] = @0
+        WHERE [Id Evaluación Entidad] = @1
+          AND [Id Tipo de Evaluación] IN (${TIPOS_NOTA_CLINICA})
+        `,
+        [archivo, idEvaluacion],
+      );
+    } catch (err) {
+      this.tryUnlinkFirmaArchivo(archivo);
+      throw err;
+    }
+
+    if (prevArchivo && path.basename(prevArchivo.replace(/\\/g, '/')) !== archivo) {
+      this.tryUnlinkFirmaArchivo(prevArchivo);
+    }
+
+    return { ok: true, archivo, bytes: buffer.length };
+  }
+
+  async clearFirmaEvaluacionPaciente(
+    idEvaluacion: number,
+  ): Promise<{ ok: true }> {
+    await this.assertEvolucionMedicaEditable(idEvaluacion);
+    const prev = await this.dataSource.query<{ firma: string | null }[]>(
+      `
+      SELECT TOP 1 LTRIM(RTRIM([Firma Evaluación Entidad])) AS firma
+      FROM [Evaluación Entidad]
+      WHERE [Id Evaluación Entidad] = @0
+        AND [Id Tipo de Evaluación] IN (${TIPOS_NOTA_CLINICA})
+      `,
+      [idEvaluacion],
+    );
+    const prevArchivo = String(prev[0]?.firma ?? '').trim();
+
+    await this.dataSource.query(
+      `
+      UPDATE [Evaluación Entidad]
+      SET [Firma Evaluación Entidad] = NULL
+      WHERE [Id Evaluación Entidad] = @0
+        AND [Id Tipo de Evaluación] IN (${TIPOS_NOTA_CLINICA})
+      `,
+      [idEvaluacion],
+    );
+    this.tryUnlinkFirmaArchivo(prevArchivo);
+    return { ok: true };
   }
 
   async getHistoriaClinicaCabecera(
