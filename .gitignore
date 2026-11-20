@@ -15,8 +15,12 @@ coverage/
 # Logs
 logs/
 back/logs/
+front/logs/
 *.log
 npm-debug.log*
+
+# NSSM descargado por deploy/install-servicio.ps1
+deploy/tools/
 
 # OS / IDE
 .DS_Store

@@ -19,6 +19,18 @@
    VITE_API_BASE_URL=http://localhost:3001
    ```
 
+## Producción en servidor Windows (NSSM)
+
+En `deploy/`:
+
+1. Configure `back/.env` y `front/.env` (o deje que el script copie desde `.env.example` y edítelos).
+2. Doble clic en `deploy/install-servicio.bat` (pide Administrador).
+3. El script hace `npm install` + build de front/back, descarga NSSM si hace falta e instala:
+   - `CeereLITE_API` → `node dist/main.js` (Nest)
+   - `CeereLITE_Front` → `vite preview` (SPA)
+
+Desinstalación: `deploy/desinstalar-servicio.bat`.
+
 ## Arranque en desarrollo
 
 Terminal 1 — API:
